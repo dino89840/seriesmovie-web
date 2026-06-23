@@ -1,0 +1,12 @@
+{
+  "name": "cm-flix",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler pages dev .",
+    "deploy": "wrangler pages deploy ."
+  },
+  "devDependencies": {
+    "wrangler": "^3.109.0"
+  }
+}
