@@ -691,7 +691,6 @@ function cardHtml(it) {
   <a class="card-item" href="/watch/${htmlEscape(it.id)}">
     <div class="poster" style="background-image:url('${htmlEscape(it.poster || "")}')">
       ${it.poster ? "" : '<span class="noimg">🎬</span>'}
-      <span class="type-badge ${cat.id}">${cat.icon} ${htmlEscape(cat.name)}</span>
       <div class="play-ov"><span>▶</span></div>
     </div>
     <div class="c-title">${htmlEscape(it.title || "Untitled")}</div>
