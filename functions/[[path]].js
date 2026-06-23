@@ -1529,36 +1529,101 @@ export async function onRequest(context) {
     return new Response(watchPage(item, user, gated, streams), { headers: { "content-type": "text/html; charset=utf-8" } });
   }
 
-  // ───────────── STREAM (signed) — real link resolve + redirect ─────────────
+  // ───────────── STREAM (signed) — Worker PROXY (real link ဘယ်တော့မှ မပေါက်ကြား) ─────────────
   if (path.startsWith("/stream/") && method === "GET") {
     const id = decodeURIComponent(path.slice("/stream/".length).split("/")[0]);
     const item = await getItem(env, id);
     if (!item) return new Response("Not found", { status: 404 });
 
-    // 1) signature စစ်
+    // 1) signature စစ် — expire / badsig ဆို ချက်ချင်း ပိတ်
     const v = await verifyStreamSig(env, id, url.searchParams);
     if (!v.ok) {
       return new Response(v.reason === "expired" ? "Link expired" : "Invalid link", { status: 403 });
     }
-    // 2) login / valid user ဖြစ်မှသာ ဖွင့်ပေး
+
+    // 2) login + valid user ဖြစ်မှသာ ဖွင့်ပေး
     const user = await getCurrentUser(request, env);
     if (!user || isExpired(user)) {
       return new Response("Login required", { status: 403 });
     }
-    // 3) link ကို ထုတ်ပေးခဲ့သူနဲ့ တူမတူ (device/sid binding)
+
+    // 3) link ကို ထုတ်ပေးခဲ့သူနဲ့ session တူမတူ (binding)
     const u = await userStreamTag(user);
     if (v.u && !safeEqual(v.u, u)) {
       return new Response("Link not valid for this session", { status: 403 });
     }
-    // 4) real R2 link resolve
+
+    // 4) real R2 / origin link ကို resolve — client ဆီ ဘယ်တော့မှ မပေးဘူး
     const real = resolveRealUrl(item, v.s, v.e, v.d === 1);
     if (!isHttpUrl(real)) return new Response("No source", { status: 404 });
 
-    // 5) redirect (302) — real link က location header ထဲ ရှိသွားပေမဲ့
-    //    user က valid + signed ဖြစ်မှသာ ဒီအဆင့်ရောက်တာမို့ leak မဖြစ်တော့ပါ။
-    const headers = { "Location": real, "Cache-Control": "private, no-store" };
-    return new Response(null, { status: 302, headers });
+    // 5) Worker ကိုယ်တိုင် origin ဆီကနေ fetch (proxy / ရေပိုက်နည်း)
+    //    Range header ကို pass-through → seek / ဖြတ်ကျော်ကြည့်ခြင်း အလုပ်လုပ်အောင်
+    const rangeHeader = request.headers.get("Range");
+    const fwdHeaders = new Headers();
+    if (rangeHeader) fwdHeaders.set("Range", rangeHeader);
+    const ifRange = request.headers.get("If-Range");
+    if (ifRange) fwdHeaders.set("If-Range", ifRange);
+
+    let originResp;
+    try {
+      originResp = await fetch(real, {
+        method: "GET",
+        headers: fwdHeaders,
+        redirect: "follow",
+      });
+    } catch (_) {
+      return new Response("Upstream error", { status: 502 });
+    }
+
+    if (!originResp.ok && originResp.status !== 206) {
+      return new Response("Upstream unavailable", { status: 502 });
+    }
+
+    // 6) response headers ကို သန့်ရှင်းအောင် ပြန်တည်ဆောက် — origin link / internal info မပေါက်အောင်
+    const outHeaders = new Headers();
+    const copyHeader = (name) => {
+      const val = originResp.headers.get(name);
+      if (val) outHeaders.set(name, val);
+    };
+    copyHeader("Content-Type");
+    copyHeader("Content-Length");
+    copyHeader("Content-Range");
+    copyHeader("Accept-Ranges");
+    copyHeader("Last-Modified");
+    copyHeader("ETag");
+
+    // Content-Type မရှိရင် mp4 default
+    if (!outHeaders.has("Content-Type")) outHeaders.set("Content-Type", "video/mp4");
+    // Range support ကို client သိအောင်
+    if (!outHeaders.has("Accept-Ranges")) outHeaders.set("Accept-Ranges", "bytes");
+
+    // signed link မို့ cache မလုပ်စေချင်
+    outHeaders.set("Cache-Control", "private, no-store");
+    // referrer / origin info မပေါက်အောင်
+    outHeaders.set("X-Content-Type-Options", "nosniff");
+
+    // 7) download mode ဆို attachment အဖြစ် ဖိုင်နာမည်ပေး
+    if (v.d === 1) {
+      const safeName = (item.title || "video")
+        .replace(/[^\w\-. ]+/g, "_")
+        .slice(0, 80)
+        .trim() || "video";
+      const ext = real.split("?")[0].split(".").pop();
+      const fname = /^[a-z0-9]{2,5}$/i.test(ext) ? `${safeName}.${ext}` : `${safeName}.mp4`;
+      outHeaders.set("Content-Disposition", `attachment; filename="${fname}"`);
+    } else {
+      outHeaders.set("Content-Disposition", "inline");
+    }
+
+    // 8) body ကို stream အဖြစ် တိုက်ရိုက် pipe — memory မစား၊ video ချက်ချင်း စီးဆင်း
+    //    origin status (200 / 206) ကို အတိအကျ ပြန်ပေး → Range အလုပ်လုပ်
+    return new Response(originResp.body, {
+      status: originResp.status,
+      headers: outHeaders,
+    });
   }
+
 
   // ───────────── AUTH STATUS ─────────────
   if (path === "/auth/status" && method === "GET") {
