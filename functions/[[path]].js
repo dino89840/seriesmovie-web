@@ -1218,7 +1218,7 @@ function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], i
           <textarea name="seasons_json" placeholder='[{"season":1,"episodes":[{"ep":1,"title":"Ep 1","video_url":"https://.../s1e1.mp4","download_url":""},{"ep":2,"title":"Ep 2","video_url":"https://.../s1e2.mp4"}]},{"season":2,"episodes":[{"ep":1,"title":"S2 Ep1","video_url":"https://.../s2e1.mp4"}]}]'></textarea>
           <div style="font-size:11px;color:var(--mut);margin-top:4px">Format: season တစ်ခုစီမှာ episodes array။ episode တစ်ခုစီမှာ ep, title, video_url, download_url(optional)။</div>
         </div>
-        <div><label>Note / ဖော်ပြချက် (optional)</label><input type="text" name="note" placeholder="ဇာတ်လမ်းအကျဉ်း…"></div>
+        <div><label>Note / ဖော်ပြချက် (optional)</label><textarea name="note" placeholder="ဇာတ်လမ်းအကျဉ်း…" style="min-height:80px"></textarea></div>
       </div>
       <button type="submit" class="btn" style="margin-top:14px">တင်မယ်</button>
     </form>
@@ -1357,7 +1357,7 @@ function adminEditPage(item, csrfToken, error = "") {
       <label>Series Episodes (JSON)</label>
       <textarea name="seasons_json" style="min-height:220px;font-family:ui-monospace,monospace;font-size:12.5px">${htmlEscape(seasonsJson)}</textarea>
     </div>
-    <label>Note</label><input type="text" name="note" value="${htmlEscape(item.note || "")}">
+    <label>Note</label><textarea name="note" style="min-height:100px">${htmlEscape(item.note || "")}</textarea>
     <button type="submit" class="btn">💾 သိမ်းမယ်</button>
   </form>
 </div></div>
@@ -1769,7 +1769,7 @@ export async function onRequest(context) {
       const title = String(form.title || "").trim().slice(0, 160);
       const poster = String(form.poster || "").trim().slice(0, 600);
       const slide_image = String(form.slide_image || "").trim().slice(0, 600);
-      const note = String(form.note || "").trim().slice(0, 1000);
+      const note = String(form.note || "").trim().slice(0, 5000);
       if (!title) return redirectInfo("Title ဖြည့်ပါ။");
       if (poster && !isHttpUrl(poster)) return redirectInfo("Poster link မှားနေပါတယ်။");
       if (slide_image && !isHttpUrl(slide_image)) return redirectInfo("Slide banner link မှားနေပါတယ်။");
@@ -1802,7 +1802,7 @@ export async function onRequest(context) {
       const title = String(form.title || "").trim().slice(0, 160);
       const poster = String(form.poster || "").trim().slice(0, 600);
       const slide_image = String(form.slide_image || "").trim().slice(0, 600);
-      const note = String(form.note || "").trim().slice(0, 1000);
+      const note = String(form.note || "").trim().slice(0, 5000);
       if (!title) return new Response(adminEditPage(existing, csrfToken, "Title ဖြည့်ပါ။"), { headers: { "content-type": "text/html; charset=utf-8" } });
       if (slide_image && !isHttpUrl(slide_image)) return new Response(adminEditPage({ ...existing, type, title, poster, slide_image, note }, csrfToken, "Slide banner link မှားနေပါတယ်။"), { headers: { "content-type": "text/html; charset=utf-8" } });
       const data = { id, type, title, poster, slide_image, note, created_at: existing.created_at || Date.now() };
