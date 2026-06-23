@@ -1,11 +1,12 @@
 // functions/[[path]].js  — PART 1 of 2
 // ════════════════════════════════════════════════════════════════
-//  CM FLIX — Self-hosted Movie / Series streaming app
+//  CM FLIX — Self-hosted Movie / Series streaming app  (D1 EDITION)
+//  • Storage: Cloudflare D1 (SQLite)  — binding name: DB
 //  • Signed / expiring URL streaming (real R2/mp4 link NEVER in HTML)
 //  • Key-only login (admin-created keys, device-limited)
 //  • Categories: Movies / Series / 21+  (Series: Season → Episode)
 //  • Slider supports separate landscape banner image (slide_image)
-//  • Production-grade Admin panel + secure session
+//  • Modern Plyr player + polished UI / logo
 // ════════════════════════════════════════════════════════════════
 
 // ── Session / key constants ──
@@ -16,8 +17,8 @@ const MAX_DEVICES_PER_KEY = 2;
 const KEY_PREFIX       = "CM";
 
 // ── Signed stream URL ──
-const STREAM_TTL_SEC   = 6 * 3600;   // signed link 6 နာရီ ကြာရင် expire
-const STREAM_SECRET_FALLBACK = "SESSION_SECRET"; // env.STREAM_SECRET မရှိရင် SESSION_SECRET သုံးမယ်
+const STREAM_TTL_SEC   = 6 * 3600;
+const STREAM_SECRET_FALLBACK = "SESSION_SECRET";
 
 // Rate limit
 const KEY_LOGIN_MAX_ATTEMPTS = 12;
@@ -38,6 +39,25 @@ function isValidCategory(c) { return c === "movie" || c === "series" || c === "a
 
 // ── Per-request cache ──
 const _reqCache = new WeakMap();
+
+/* ══════════════════════════════════════════════════
+   D1 HELPERS  — DB binding
+   ══════════════════════════════════════════════════ */
+function db(env) {
+  if (!env.DB) throw new Error("D1 binding 'DB' not configured");
+  return env.DB;
+}
+
+// expired session / rate-limit row တွေကို lazy cleanup (cron မလို)
+async function lazyCleanup(env) {
+  const now = Date.now();
+  try {
+    await db(env).batch([
+      db(env).prepare("DELETE FROM sessions WHERE expires_at>0 AND expires_at<?").bind(now),
+      db(env).prepare("DELETE FROM rate_limits WHERE reset_at>0 AND reset_at<?").bind(Math.floor(now / 1000)),
+    ]);
+  } catch (_) {}
+}
 
 /* ══════════════════════════════════════════════════
    CRYPTO HELPERS
@@ -195,19 +215,16 @@ function shortDeviceLabel(request) {
 }
 
 /* ══════════════════════════════════════════════════
-   SIGNED STREAM URL  (real R2 link never exposed in HTML)
-   /stream/<itemId>?s=<season>&e=<ep>&d=<0|1>&exp=<ms>&u=<sidShort>&sig=<hmac>
+   SIGNED STREAM URL
    ══════════════════════════════════════════════════ */
 function streamSecret(env) {
   return env.STREAM_SECRET || env.SESSION_SECRET || STREAM_SECRET_FALLBACK;
 }
 
-// canonical string ကို sign / verify နှစ်ဖက်လုံး တူညီအောင်
 function streamSignBase(itemId, s, e, d, exp, u) {
   return `${itemId}|${s}|${e}|${d}|${exp}|${u}`;
 }
 
-// signed path တစ်ခု ဖန်တီးပေးတယ် (u = session id short, link ကို user နဲ့ bind ဖို့)
 async function makeStreamUrl(env, itemId, { s = -1, e = -1, download = false, u = "" } = {}) {
   const exp = Date.now() + STREAM_TTL_SEC * 1000;
   const d = download ? 1 : 0;
@@ -222,7 +239,6 @@ async function makeStreamUrl(env, itemId, { s = -1, e = -1, download = false, u 
   return `/stream/${encodeURIComponent(itemId)}?${qs.toString()}`;
 }
 
-// signed query ကို verify လုပ်တယ် → ok ဖြစ်ရင် {s,e,d} ပြန်ပေး
 async function verifyStreamSig(env, itemId, params) {
   const s = parseInt(params.get("s") ?? "-1", 10);
   const e = parseInt(params.get("e") ?? "-1", 10);
@@ -237,38 +253,60 @@ async function verifyStreamSig(env, itemId, params) {
 }
 
 /* ══════════════════════════════════════════════════
-   KEY STORAGE  (KV namespace: AUTH_USERS)
+   KEY STORAGE  (D1: table `keys`)
+   row: { key_id, role, created_at, expires_at, duration_label, note, disabled(0/1), devices(JSON) }
    ══════════════════════════════════════════════════ */
+function rowToKey(row) {
+  if (!row) return null;
+  let devices = [];
+  try { devices = JSON.parse(row.devices || "[]"); } catch (_) { devices = []; }
+  return {
+    key: row.key_id,
+    role: row.role || "trial",
+    created_at: row.created_at || 0,
+    expires_at: row.expires_at || 0,
+    duration_label: row.duration_label || "",
+    note: row.note || "",
+    disabled: !!row.disabled,
+    devices,
+  };
+}
+
 async function getKey(env, keyId) {
   if (!keyId) return null;
-  const raw = await env.AUTH_USERS.get(`key:${keyId}`);
-  if (!raw) return null;
-  try { return JSON.parse(raw); } catch (_) { return null; }
+  const row = await db(env).prepare("SELECT * FROM keys WHERE key_id=?").bind(keyId).first();
+  return rowToKey(row);
 }
 
 async function putKey(env, keyId, data) {
-  const active = (data.expires_at && Date.now() < data.expires_at && !data.disabled);
-  const meta = {
-    role: data.role || "trial",
-    expires_at: data.expires_at || 0,
-    created_at: data.created_at || 0,
-    duration_label: data.duration_label || "",
-    device_count: (data.devices || []).length,
-    disabled: !!data.disabled,
-    note: (data.note || "").slice(0, 40),
-    active,
-  };
-  await env.AUTH_USERS.put(`key:${keyId}`, JSON.stringify(data), { metadata: meta });
+  await db(env).prepare(
+    `INSERT INTO keys (key_id, role, created_at, expires_at, duration_label, note, disabled, devices)
+     VALUES (?,?,?,?,?,?,?,?)
+     ON CONFLICT(key_id) DO UPDATE SET
+       role=excluded.role, created_at=excluded.created_at, expires_at=excluded.expires_at,
+       duration_label=excluded.duration_label, note=excluded.note,
+       disabled=excluded.disabled, devices=excluded.devices`
+  ).bind(
+    keyId,
+    data.role || "trial",
+    data.created_at || 0,
+    data.expires_at || 0,
+    (data.duration_label || "").slice(0, 40),
+    (data.note || "").slice(0, 60),
+    data.disabled ? 1 : 0,
+    JSON.stringify(data.devices || [])
+  ).run();
 }
 
 async function deleteKey(env, keyId) {
   const k = await getKey(env, keyId);
+  const stmts = [];
   if (k && Array.isArray(k.devices)) {
-    for (const d of k.devices) if (d.id) await env.AUTH_USERS.delete(`kdev:${d.id}`);
+    for (const d of k.devices) if (d.id) stmts.push(db(env).prepare("DELETE FROM kdev WHERE device_id=?").bind(d.id));
   }
-  const list = await env.AUTH_USERS.list({ prefix: `sess:${keyId}:` });
-  for (const s of list.keys) await env.AUTH_USERS.delete(s.name);
-  await env.AUTH_USERS.delete(`key:${keyId}`);
+  stmts.push(db(env).prepare("DELETE FROM sessions WHERE key_id=?").bind(keyId));
+  stmts.push(db(env).prepare("DELETE FROM keys WHERE key_id=?").bind(keyId));
+  if (stmts.length) await db(env).batch(stmts);
 }
 
 function isKeyExpired(k) {
@@ -279,13 +317,7 @@ function isKeyExpired(k) {
 }
 
 /* ══════════════════════════════════════════════════
-   CONTENT STORAGE  (KV namespace: AUTH_USERS)
-   item:<ID> → JSON
-   {
-     id, type, title, poster, slide_image, note, created_at,
-     video_url, download_url,                       // movie/adult
-     seasons:[{season,episodes:[{ep,title,video_url,download_url}]}]  // series
-   }
+   CONTENT STORAGE  (D1: table `items`)
    ══════════════════════════════════════════════════ */
 function generateItemId() {
   const arr = new Uint8Array(8);
@@ -295,67 +327,96 @@ function generateItemId() {
   return "i" + s.slice(0, 12);
 }
 
+function rowToItem(row) {
+  if (!row) return null;
+  const item = {
+    id: row.id,
+    type: row.type || "movie",
+    title: row.title || "",
+    poster: row.poster || "",
+    slide_image: row.slide_image || "",
+    note: row.note || "",
+    created_at: row.created_at || 0,
+    video_url: row.video_url || "",
+    download_url: row.download_url || "",
+  };
+  if (item.type === "series") {
+    try { item.seasons = JSON.parse(row.seasons || "[]"); } catch (_) { item.seasons = []; }
+  }
+  return item;
+}
+
 async function getItem(env, id) {
   if (!id) return null;
-  const raw = await env.AUTH_USERS.get(`item:${id}`);
-  if (!raw) return null;
-  try { return JSON.parse(raw); } catch (_) { return null; }
+  const row = await db(env).prepare("SELECT * FROM items WHERE id=?").bind(id).first();
+  return rowToItem(row);
 }
 
 async function putItem(env, id, data) {
-  const meta = {
-    title: (data.title || "").slice(0, 90),
-    poster: (data.poster || "").slice(0, 500),
-    slide_image: (data.slide_image || "").slice(0, 500),
-    type: data.type || "movie",
-    created_at: data.created_at || 0,
-  };
-  await env.AUTH_USERS.put(`item:${id}`, JSON.stringify(data), { metadata: meta });
+  await db(env).prepare(
+    `INSERT INTO items (id, type, title, poster, slide_image, note, created_at, video_url, download_url, seasons)
+     VALUES (?,?,?,?,?,?,?,?,?,?)
+     ON CONFLICT(id) DO UPDATE SET
+       type=excluded.type, title=excluded.title, poster=excluded.poster,
+       slide_image=excluded.slide_image, note=excluded.note, created_at=excluded.created_at,
+       video_url=excluded.video_url, download_url=excluded.download_url, seasons=excluded.seasons`
+  ).bind(
+    id,
+    data.type || "movie",
+    (data.title || "").slice(0, 160),
+    (data.poster || "").slice(0, 600),
+    (data.slide_image || "").slice(0, 600),
+    (data.note || "").slice(0, 5000),
+    data.created_at || 0,
+    data.video_url || "",
+    data.download_url || "",
+    data.type === "series" ? JSON.stringify(data.seasons || []) : ""
+  ).run();
 }
 
 async function deleteItem(env, id) {
-  await env.AUTH_USERS.delete(`item:${id}`);
+  await db(env).prepare("DELETE FROM items WHERE id=?").bind(id).run();
 }
 
-// All item summaries (metadata only, no N+1)
+// All item summaries (metadata only)
 async function listItems(env) {
-  const items = [];
-  let cursor = undefined;
-  do {
-    const res = await env.AUTH_USERS.list({ prefix: "item:", limit: 1000, cursor });
-    for (const k of res.keys) {
-      const m = k.metadata || {};
-      items.push({
-        id: k.name.slice(5),
-        title: m.title || "",
-        poster: m.poster || "",
-        slide_image: m.slide_image || "",
-        type: m.type || "movie",
-        created_at: m.created_at || 0,
-      });
-    }
-    cursor = res.list_complete ? undefined : res.cursor;
-  } while (cursor);
-  items.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
-  return items;
+  const res = await db(env).prepare(
+    "SELECT id, title, poster, slide_image, type, created_at FROM items ORDER BY created_at DESC"
+  ).all();
+  return (res.results || []).map(r => ({
+    id: r.id,
+    title: r.title || "",
+    poster: r.poster || "",
+    slide_image: r.slide_image || "",
+    type: r.type || "movie",
+    created_at: r.created_at || 0,
+  }));
 }
 
 /* ══════════════════════════════════════════════════
-   SESSIONS
+   SESSIONS  (D1: table `sessions`)
    ══════════════════════════════════════════════════ */
 async function recordSession(env, keyId, sid, meta) {
-  await env.AUTH_USERS.put(
-    `sess:${keyId}:${sid}`, "1",
-    { expirationTtl: SESSION_HOURS * 3600, metadata: { ...meta, created_at: Date.now() } }
-  );
+  const now = Date.now();
+  await db(env).prepare(
+    `INSERT INTO sessions (key_id, sid, created_at, meta, expires_at)
+     VALUES (?,?,?,?,?)
+     ON CONFLICT(key_id, sid) DO UPDATE SET meta=excluded.meta, expires_at=excluded.expires_at`
+  ).bind(
+    keyId, sid, now,
+    JSON.stringify({ ...meta, created_at: now }),
+    now + SESSION_HOURS * 3600 * 1000
+  ).run();
 }
 async function isSessionRevoked(env, keyId, sid) {
   if (!sid) return false;
-  const v = await env.AUTH_USERS.get(`sess:${keyId}:${sid}`);
-  return v === null;
+  const row = await db(env).prepare(
+    "SELECT sid FROM sessions WHERE key_id=? AND sid=? AND (expires_at=0 OR expires_at>?)"
+  ).bind(keyId, sid, Date.now()).first();
+  return row === null;
 }
 async function revokeSession(env, keyId, sid) {
-  await env.AUTH_USERS.delete(`sess:${keyId}:${sid}`);
+  await db(env).prepare("DELETE FROM sessions WHERE key_id=? AND sid=?").bind(keyId, sid).run();
 }
 
 /* ══════════════════════════════════════════════════
@@ -396,7 +457,6 @@ function isExpired(user) {
   return Date.now() > user.expires_at;
 }
 
-// session id ကို signed-url binding အတွက် short hash
 async function userStreamTag(user) {
   if (!user) return "";
   return (await sha256Hex("u:" + user.keyId + ":" + (user.sid || ""))).slice(0, 12);
@@ -408,17 +468,18 @@ function htmlEscape(s) {
     .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
+/* Rate limit (D1: table `rate_limits`) */
 async function rateLimitHit(env, key, max, windowSec) {
-  const raw = await env.AUTH_USERS.get(`rl:${key}`);
   const now = Math.floor(Date.now() / 1000);
-  let entry = { count: 0, reset: now + windowSec };
-  if (raw) {
-    try { const p = JSON.parse(raw); if (p && p.reset > now) entry = p; } catch (_) {}
-  }
-  entry.count += 1;
-  const ttl = Math.max(1, entry.reset - now);
-  await env.AUTH_USERS.put(`rl:${key}`, JSON.stringify(entry), { expirationTtl: ttl });
-  return { blocked: entry.count > max, count: entry.count, reset: entry.reset };
+  const row = await db(env).prepare("SELECT count, reset_at FROM rate_limits WHERE rl_key=?").bind(key).first();
+  let count = 0, reset = now + windowSec;
+  if (row && row.reset_at > now) { count = row.count; reset = row.reset_at; }
+  count += 1;
+  await db(env).prepare(
+    `INSERT INTO rate_limits (rl_key, count, reset_at) VALUES (?,?,?)
+     ON CONFLICT(rl_key) DO UPDATE SET count=excluded.count, reset_at=excluded.reset_at`
+  ).bind(key, count, reset).run();
+  return { blocked: count > max, count, reset };
 }
 
 /* ══════════════════════════════════════════════════
@@ -445,7 +506,7 @@ async function verifyCsrf(request, form) {
 }
 
 /* ══════════════════════════════════════════════════
-   DEVICE BINDING (2-phone limit)
+   DEVICE BINDING (2-phone limit)  — D1: table `kdev`
    ══════════════════════════════════════════════════ */
 async function bindDeviceToKey(env, keyObj, keyId, deviceId, request, clientIp) {
   keyObj.devices = Array.isArray(keyObj.devices) ? keyObj.devices : [];
@@ -467,7 +528,10 @@ async function bindDeviceToKey(env, keyObj, keyId, deviceId, request, clientIp) 
     ip: ipNetworkPrefix(clientIp),
   });
   await putKey(env, keyId, keyObj);
-  await env.AUTH_USERS.put(`kdev:${deviceId}`, keyId);
+  await db(env).prepare(
+    `INSERT INTO kdev (device_id, key_id) VALUES (?,?)
+     ON CONFLICT(device_id) DO UPDATE SET key_id=excluded.key_id`
+  ).bind(deviceId, keyId).run();
   return { ok: true };
 }
 
@@ -499,121 +563,130 @@ function isHttpUrl(u) {
 /* ── PART 1 ends here. PART 2 uses everything above ── */
 // functions/[[path]].js  — PART 2 of 2  (append directly below PART 1)
 // ════════════════════════════════════════════════════════════════
-//  CM FLIX — UI, routes, signed-stream player, admin panel
-//  • Player uses /stream/<id>?...sig  (real link never in HTML)
-//  • Slider uses slide_image (landscape) → no blurry poster
+//  CM FLIX — UI, routes, signed-stream player (Plyr), admin panel
 // ════════════════════════════════════════════════════════════════
 
 /* ══════════════════════════════════════════════════
-   GLOBAL STYLES
+   GLOBAL STYLES  (refined UI)
    ══════════════════════════════════════════════════ */
 const CMFLIX_CSS = `
   *{box-sizing:border-box}
   :root{
-    --bg0:#070a14; --bg1:#0d1220; --bg2:#131a2e;
-    --card:#121829; --line:#222c44;
-    --txt:#eef2ff; --mut:#8a96b5;
-    --acc:#e50914; --acc2:#ff2d55; --gold:#f5c518;
+    --bg0:#05070f; --bg1:#0b0f1c; --bg2:#11172a;
+    --card:#10162a; --line:#1f2942;
+    --txt:#eef2ff; --mut:#8794b3;
+    --acc:#e50914; --acc2:#ff2e54; --gold:#f5c518;
     --ok:#22c55e;
+    --r:14px;
   }
   html,body{margin:0;padding:0}
   body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Padauk","Myanmar Text",sans-serif;
-    background:radial-gradient(1100px 560px at 85% -8%,rgba(229,9,20,.18),transparent),
-               radial-gradient(900px 500px at -8% 6%,rgba(40,80,200,.14),transparent),
-               linear-gradient(180deg,var(--bg0),var(--bg1) 60%,var(--bg2));
+    background:radial-gradient(1200px 600px at 85% -10%,rgba(229,9,20,.16),transparent),
+               radial-gradient(900px 520px at -8% 4%,rgba(50,90,220,.12),transparent),
+               linear-gradient(180deg,var(--bg0),var(--bg1) 55%,var(--bg2));
     color:var(--txt);min-height:100vh;-webkit-tap-highlight-color:transparent}
   a{color:inherit}
-  .wrap{max-width:1180px;margin:0 auto;padding:0 16px}
+  .wrap{max-width:1200px;margin:0 auto;padding:0 16px}
 
   .topbar{position:sticky;top:0;z-index:200;display:flex;align-items:center;gap:14px;
-    padding:12px 16px;background:rgba(8,11,20,.82);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
-  .brand{display:flex;align-items:center;gap:9px;text-decoration:none;font-weight:900;font-size:22px;letter-spacing:.5px;white-space:nowrap}
-  .brand .logo-c{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:9px;
-    background:linear-gradient(135deg,var(--acc),var(--acc2));box-shadow:0 4px 14px rgba(229,9,20,.5);font-size:18px}
-  .brand .logo-t{background:linear-gradient(90deg,#fff,#ffd1d4);-webkit-background-clip:text;background-clip:text;color:transparent}
-  .brand .logo-t b{color:var(--acc)}
-  .topbar .search{flex:1;max-width:520px;margin:0 auto;position:relative}
-  .topbar .search input{width:100%;padding:10px 14px 10px 38px;border-radius:24px;border:1px solid var(--line);
-    background:#0a1020;color:#fff;font-size:14px;outline:none;font-family:inherit}
-  .topbar .search input:focus{border-color:var(--acc2);box-shadow:0 0 0 3px rgba(255,45,85,.18)}
-  .topbar .search .si{position:absolute;left:13px;top:50%;transform:translateY(-50%);opacity:.6}
+    padding:12px 18px;background:rgba(5,7,15,.78);backdrop-filter:saturate(160%) blur(16px);border-bottom:1px solid var(--line)}
+
+  /* ── Refined brand / logo (SVG monogram) ── */
+  .brand{display:flex;align-items:center;gap:11px;text-decoration:none;white-space:nowrap}
+  .brand .mark{width:38px;height:38px;flex:0 0 38px;border-radius:11px;display:flex;align-items:center;justify-content:center;
+    background:linear-gradient(140deg,#ff3a3f,#e50914 55%,#a3060d);
+    box-shadow:0 6px 18px rgba(229,9,20,.45),inset 0 1px 0 rgba(255,255,255,.25);position:relative;overflow:hidden}
+  .brand .mark svg{width:22px;height:22px;display:block;filter:drop-shadow(0 1px 2px rgba(0,0,0,.4))}
+  .brand .mark::after{content:"";position:absolute;inset:0;background:linear-gradient(120deg,transparent 40%,rgba(255,255,255,.22) 50%,transparent 60%)}
+  .brand .wordmark{display:flex;flex-direction:column;line-height:1}
+  .brand .wordmark .t1{font-weight:900;font-size:19px;letter-spacing:1.5px;background:linear-gradient(90deg,#fff,#ffc9cc);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .brand .wordmark .t2{font-size:9px;letter-spacing:3px;color:var(--mut);font-weight:700;margin-top:3px}
+
+  .topbar .search{flex:1;max-width:540px;margin:0 auto;position:relative}
+  .topbar .search input{width:100%;padding:11px 14px 11px 40px;border-radius:26px;border:1px solid var(--line);
+    background:#080d1a;color:#fff;font-size:14px;outline:none;font-family:inherit;transition:.2s}
+  .topbar .search input:focus{border-color:var(--acc2);box-shadow:0 0 0 3px rgba(255,46,84,.16)}
+  .topbar .search .si{position:absolute;left:14px;top:50%;transform:translateY(-50%);opacity:.55}
   .topbar .acts{display:flex;align-items:center;gap:8px;white-space:nowrap}
-  .topbar .acts a{font-size:13px;text-decoration:none;color:var(--mut);font-weight:600;padding:7px 11px;border-radius:8px}
-  .topbar .acts a.me{background:linear-gradient(135deg,var(--acc),var(--acc2));color:#fff}
+  .topbar .acts a{font-size:13px;text-decoration:none;color:var(--mut);font-weight:600;padding:7px 12px;border-radius:9px;transition:.15s}
+  .topbar .acts a.me{background:linear-gradient(135deg,var(--acc),var(--acc2));color:#fff;box-shadow:0 4px 12px rgba(229,9,20,.35)}
   .topbar .acts a:hover{color:#fff}
-  @media(max-width:640px){.brand{font-size:18px}.topbar .acts a:not(.me){display:none}}
+  @media(max-width:640px){.brand .wordmark .t1{font-size:17px}.topbar .acts a:not(.me){display:none}}
 
-  .navchips{display:flex;gap:8px;overflow-x:auto;padding:12px 16px 4px;scrollbar-width:none}
+  .navchips{display:flex;gap:9px;overflow-x:auto;padding:14px 16px 4px;scrollbar-width:none}
   .navchips::-webkit-scrollbar{display:none}
-  .navchips a{flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:22px;
-    text-decoration:none;font-weight:700;font-size:13.5px;color:#fff;background:#161d31;border:1px solid var(--line)}
-  .navchips a.on{background:linear-gradient(135deg,var(--acc),var(--acc2));border-color:transparent;box-shadow:0 4px 12px rgba(229,9,20,.4)}
-  .navchips a:hover{filter:brightness(1.12)}
+  .navchips a{flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;padding:9px 17px;border-radius:24px;
+    text-decoration:none;font-weight:700;font-size:13.5px;color:#fff;background:#131b2e;border:1px solid var(--line);transition:.15s}
+  .navchips a.on{background:linear-gradient(135deg,var(--acc),var(--acc2));border-color:transparent;box-shadow:0 4px 14px rgba(229,9,20,.4)}
+  .navchips a:hover{filter:brightness(1.14)}
 
-  /* Hero slider — landscape banner, cover-fit */
-  .hero{position:relative;margin:14px 0 6px;border-radius:18px;overflow:hidden;border:1px solid var(--line);box-shadow:0 18px 50px rgba(0,0,0,.55)}
-  .hero-track{display:flex;transition:transform .55s cubic-bezier(.4,0,.2,1)}
-  .slide{position:relative;min-width:100%;height:340px;display:flex;align-items:flex-end;overflow:hidden;background:#0a0e1a}
-  .slide-bg{position:absolute;inset:0;background-size:cover;background-position:center center;background-repeat:no-repeat}
-  .slide::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(7,10,20,.92) 0%,rgba(7,10,20,.55) 45%,rgba(7,10,20,.12) 100%)}
-  .slide-body{position:relative;z-index:2;padding:26px 30px;max-width:620px}
-  .slide-tag{display:inline-block;background:var(--acc);color:#fff;font-size:11px;font-weight:800;padding:4px 11px;border-radius:6px;letter-spacing:.5px;margin-bottom:10px}
-  .slide-title{font-size:30px;font-weight:900;margin:0 0 8px;line-height:1.15;text-shadow:0 2px 14px rgba(0,0,0,.6)}
-  .slide-desc{color:#cfd6e8;font-size:14px;line-height:1.6;margin:0 0 16px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-  .slide-btn{display:inline-flex;align-items:center;gap:8px;background:#fff;color:#111;font-weight:800;padding:11px 22px;border-radius:9px;text-decoration:none;font-size:14px}
-  .slide-btn:hover{background:var(--acc);color:#fff}
-  .hero-dots{position:absolute;bottom:14px;right:20px;z-index:3;display:flex;gap:7px}
-  .hero-dots b{width:9px;height:9px;border-radius:50%;background:rgba(255,255,255,.4);cursor:pointer;transition:.2s}
-  .hero-dots b.on{background:var(--acc);width:24px;border-radius:5px}
-  .hero-nav{position:absolute;top:50%;transform:translateY(-50%);z-index:3;width:40px;height:40px;border-radius:50%;
-    border:0;background:rgba(0,0,0,.45);color:#fff;font-size:20px;cursor:pointer;display:flex;align-items:center;justify-content:center}
+  /* Hero slider */
+  .hero{position:relative;margin:16px 0 6px;border-radius:20px;overflow:hidden;border:1px solid var(--line);box-shadow:0 22px 60px rgba(0,0,0,.6)}
+  .hero-track{display:flex;transition:transform .6s cubic-bezier(.45,.05,.2,1)}
+  .slide{position:relative;min-width:100%;height:360px;display:flex;align-items:flex-end;overflow:hidden;background:#080c18}
+  .slide-bg{position:absolute;inset:0;background-size:cover;background-position:center;background-repeat:no-repeat;transform:scale(1.04)}
+  .slide::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(5,7,15,.95) 0%,rgba(5,7,15,.6) 42%,rgba(5,7,15,.1) 100%)}
+  .slide-body{position:relative;z-index:2;padding:30px 34px;max-width:640px}
+  .slide-tag{display:inline-block;background:var(--acc);color:#fff;font-size:11px;font-weight:800;padding:5px 12px;border-radius:7px;letter-spacing:.6px;margin-bottom:12px}
+  .slide-title{font-size:32px;font-weight:900;margin:0 0 10px;line-height:1.12;text-shadow:0 2px 16px rgba(0,0,0,.65)}
+  .slide-desc{color:#cfd6e8;font-size:14px;line-height:1.6;margin:0 0 18px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .slide-btn{display:inline-flex;align-items:center;gap:9px;background:#fff;color:#111;font-weight:800;padding:12px 24px;border-radius:10px;text-decoration:none;font-size:14px;transition:.15s}
+  .slide-btn:hover{background:var(--acc);color:#fff;transform:translateY(-2px)}
+  .hero-dots{position:absolute;bottom:16px;right:22px;z-index:3;display:flex;gap:7px}
+  .hero-dots b{width:9px;height:9px;border-radius:50%;background:rgba(255,255,255,.4);cursor:pointer;transition:.25s}
+  .hero-dots b.on{background:var(--acc);width:26px;border-radius:5px}
+  .hero-nav{position:absolute;top:50%;transform:translateY(-50%);z-index:3;width:42px;height:42px;border-radius:50%;
+    border:0;background:rgba(0,0,0,.42);color:#fff;font-size:20px;cursor:pointer;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(6px);transition:.15s}
   .hero-nav:hover{background:var(--acc)}
-  .hero-nav.prev{left:14px}.hero-nav.next{right:14px}
-  @media(max-width:640px){.slide{height:200px}.slide-title{font-size:20px}.slide-desc{display:none}.slide-body{padding:16px}.hero-nav{display:none}}
+  .hero-nav.prev{left:16px}.hero-nav.next{right:16px}
+  @media(max-width:640px){.slide{height:210px}.slide-title{font-size:21px}.slide-desc{display:none}.slide-body{padding:18px}.hero-nav{display:none}}
 
-  .section{margin:26px 0}
-  .section-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
-  .section-head h2{display:flex;align-items:center;gap:9px;font-size:20px;margin:0;font-weight:800}
-  .section-head a.seeall{font-size:13px;font-weight:700;color:var(--acc2);text-decoration:none;display:inline-flex;align-items:center;gap:4px}
+  .section{margin:28px 0}
+  .section-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:15px}
+  .section-head h2{display:flex;align-items:center;gap:10px;font-size:20px;margin:0;font-weight:800}
+  .section-head a.seeall{font-size:13px;font-weight:700;color:var(--acc2);text-decoration:none;display:inline-flex;align-items:center;gap:4px;transition:.15s}
   .section-head a.seeall:hover{color:#fff}
 
-  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
-  @media(min-width:560px){.grid{grid-template-columns:repeat(4,1fr);gap:14px}}
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:13px}
+  @media(min-width:560px){.grid{grid-template-columns:repeat(4,1fr);gap:15px}}
   @media(min-width:820px){.grid{grid-template-columns:repeat(5,1fr)}}
   @media(min-width:1024px){.grid{grid-template-columns:repeat(6,1fr)}}
 
-  .card-item{display:block;text-decoration:none;border-radius:12px;overflow:hidden;background:var(--card);
-    border:1px solid var(--line);transition:transform .15s,border-color .15s,box-shadow .15s;position:relative}
-  .card-item:hover{transform:translateY(-4px);border-color:var(--acc2);box-shadow:0 12px 28px rgba(0,0,0,.5)}
-  .poster{width:100%;aspect-ratio:2/3;background-size:cover;background-position:center;background-color:#0c1322;
+  .card-item{display:block;text-decoration:none;border-radius:13px;overflow:hidden;background:var(--card);
+    border:1px solid var(--line);transition:transform .18s,border-color .18s,box-shadow .18s;position:relative}
+  .card-item:hover{transform:translateY(-5px);border-color:var(--acc2);box-shadow:0 14px 32px rgba(0,0,0,.55)}
+  .poster{width:100%;aspect-ratio:2/3;background-size:cover;background-position:center;background-color:#0a1120;
     display:flex;align-items:center;justify-content:center;position:relative}
-  .poster .noimg{font-size:34px;opacity:.35}
-  .poster .type-badge{position:absolute;top:7px;left:7px;font-size:10px;font-weight:800;padding:3px 8px;border-radius:6px;
-    background:rgba(0,0,0,.7);backdrop-filter:blur(4px);letter-spacing:.4px}
-  .poster .type-badge.movie{color:#7dd3fc}
-  .poster .type-badge.series{color:#c4b5fd}
-  .poster .type-badge.adult{color:#fca5a5}
-  .poster .play-ov{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;opacity:0;transition:.18s;background:rgba(0,0,0,.3)}
+  .poster .noimg{font-size:34px;opacity:.3}
+  .poster .play-ov{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;opacity:0;transition:.2s;background:linear-gradient(0deg,rgba(0,0,0,.55),rgba(0,0,0,.15))}
   .card-item:hover .play-ov{opacity:1}
-  .poster .play-ov span{width:46px;height:46px;border-radius:50%;background:var(--acc);display:flex;align-items:center;justify-content:center;font-size:18px;box-shadow:0 4px 16px rgba(229,9,20,.6)}
-  .c-title{padding:8px 9px 10px;font-size:12.5px;font-weight:600;line-height:1.35;
+  .poster .play-ov span{width:48px;height:48px;border-radius:50%;background:var(--acc);display:flex;align-items:center;justify-content:center;font-size:18px;box-shadow:0 6px 18px rgba(229,9,20,.6)}
+  .c-title{padding:9px 10px 11px;font-size:12.5px;font-weight:600;line-height:1.35;
     display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;color:#e7ecf8}
 
-  .pager{display:flex;gap:6px;align-items:center;justify-content:center;flex-wrap:wrap;margin:28px 0 8px}
-  .pager a,.pager span{min-width:40px;text-align:center;padding:9px 13px;border-radius:9px;text-decoration:none;font-size:13.5px;font-weight:700;border:1px solid var(--line);color:#cfe;background:#0f1626}
+  .pager{display:flex;gap:6px;align-items:center;justify-content:center;flex-wrap:wrap;margin:30px 0 8px}
+  .pager a,.pager span{min-width:40px;text-align:center;padding:9px 13px;border-radius:9px;text-decoration:none;font-size:13.5px;font-weight:700;border:1px solid var(--line);color:#cfe;background:#0d1424;transition:.15s}
   .pager a:hover{filter:brightness(1.3);transform:translateY(-1px)}
   .pager .cur{background:linear-gradient(135deg,var(--acc),var(--acc2));color:#fff;border-color:transparent}
   .pager .dis{opacity:.35;pointer-events:none}
   .pager .gap{border:0;background:transparent;color:var(--mut)}
 
   .empty{grid-column:1/-1;text-align:center;color:var(--mut);padding:54px 16px;font-size:14px}
-  .footer{text-align:center;color:var(--mut);font-size:12px;padding:34px 16px 26px;border-top:1px solid var(--line);margin-top:30px}
+  .footer{text-align:center;color:var(--mut);font-size:12px;padding:36px 16px 28px;border-top:1px solid var(--line);margin-top:32px}
   .footer b{color:var(--acc)}
 `;
 
-function brandLogo() {
-  return `<a class="brand" href="/"><span class="logo-c">🎬</span><span class="logo-t">CM&nbsp;<b>FLIX</b></span></a>`;
+// SVG play-mark monogram logo
+function logoMark() {
+  return `<span class="mark"><svg viewBox="0 0 24 24" fill="none"><path d="M8 5.5v13a1 1 0 0 0 1.54.84l9.5-6.5a1 1 0 0 0 0-1.68l-9.5-6.5A1 1 0 0 0 8 5.5Z" fill="#fff"/></svg></span>`;
 }
+function brandLogo() {
+  return `<a class="brand" href="/">${logoMark()}<span class="wordmark"><span class="t1">CM FLIX</span><span class="t2">STREAM&nbsp;HUB</span></span></a>`;
+}
+
+// Plyr CDN (modern player)
+const PLYR_CSS_CDN = "https://cdn.plyr.io/3.7.8/plyr.css";
+const PLYR_JS_CDN  = "https://cdn.plyr.io/3.7.8/plyr.polyfilled.js";
 
 function pageShell(title, body, opts = {}) {
   return `<!doctype html>
@@ -622,33 +695,37 @@ function pageShell(title, body, opts = {}) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
-<meta name="theme-color" content="#070a14">
+<meta name="theme-color" content="#05070f">
 <title>${htmlEscape(title)}</title>
+${opts.plyr ? `<link rel="stylesheet" href="${PLYR_CSS_CDN}">` : ""}
 <style>${CMFLIX_CSS}${opts.extraCss || ""}</style>
 </head>
 <body>
 ${body}
+${opts.plyr ? `<script src="${PLYR_JS_CDN}"></script>` : ""}
 ${opts.script ? `<script>${opts.script}</script>` : ""}
 </body></html>`;
 }
 
 const AUTH_CSS = `
   .auth-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
-  .auth-card{background:rgba(15,22,38,.94);backdrop-filter:blur(10px);border:1px solid var(--line);border-radius:18px;padding:32px;width:100%;max-width:440px;box-shadow:0 18px 50px rgba(0,0,0,.6)}
-  .auth-card .logo-c{width:46px;height:46px;font-size:24px;border-radius:12px;margin-bottom:14px}
-  .auth-card h1{margin:0 0 6px;font-size:22px}
-  .auth-card p.sub{margin:0 0 18px;color:var(--mut);font-size:13.5px;line-height:1.6}
+  .auth-card{background:rgba(13,20,36,.94);backdrop-filter:blur(12px);border:1px solid var(--line);border-radius:20px;padding:34px;width:100%;max-width:440px;box-shadow:0 22px 60px rgba(0,0,0,.65)}
+  .auth-card .auth-logo{display:flex;justify-content:center;margin-bottom:18px}
+  .auth-card .auth-logo .mark{width:54px;height:54px;flex:0 0 54px;border-radius:15px}
+  .auth-card .auth-logo .mark svg{width:30px;height:30px}
+  .auth-card h1{margin:0 0 6px;font-size:22px;text-align:center}
+  .auth-card p.sub{margin:0 0 18px;color:var(--mut);font-size:13.5px;line-height:1.6;text-align:center}
   label{display:block;font-size:13px;margin:12px 0 6px;color:#cdd;font-weight:600}
-  input[type=text],input[type=number],input[type=url],input[type=search],select,textarea{width:100%;padding:12px 14px;border-radius:10px;border:1px solid var(--line);background:#0a1220;color:#fff;font-size:15px;outline:none;font-family:inherit;transition:border-color .15s,box-shadow .15s}
-  input:focus,select:focus,textarea:focus{border-color:var(--acc2);box-shadow:0 0 0 3px rgba(255,45,85,.18)}
+  input[type=text],input[type=number],input[type=url],input[type=search],select,textarea{width:100%;padding:12px 14px;border-radius:11px;border:1px solid var(--line);background:#080d1a;color:#fff;font-size:15px;outline:none;font-family:inherit;transition:.15s}
+  input:focus,select:focus,textarea:focus{border-color:var(--acc2);box-shadow:0 0 0 3px rgba(255,46,84,.16)}
   textarea{resize:vertical;min-height:64px}
   .key-input{font-size:18px !important;letter-spacing:2px;text-align:center;font-weight:700;text-transform:uppercase}
-  .btn{width:100%;margin-top:18px;padding:13px;border:0;border-radius:10px;background:linear-gradient(135deg,var(--acc),var(--acc2));color:#fff;font-weight:800;font-size:15px;cursor:pointer;font-family:inherit;transition:filter .12s}
-  .btn:hover{filter:brightness(1.08)}
+  .btn{width:100%;margin-top:18px;padding:13px;border:0;border-radius:11px;background:linear-gradient(135deg,var(--acc),var(--acc2));color:#fff;font-weight:800;font-size:15px;cursor:pointer;font-family:inherit;transition:filter .12s,transform .12s}
+  .btn:hover{filter:brightness(1.08);transform:translateY(-1px)}
   .btn:disabled{opacity:.6;cursor:not-allowed}
-  .err{background:#3a1020;border:1px solid #6a2030;color:#ffd;padding:10px 12px;border-radius:8px;margin-bottom:12px;font-size:13px;line-height:1.5}
-  .ok{background:#10331a;border:1px solid #225a30;color:#cfc;padding:10px 12px;border-radius:8px;margin-bottom:12px;font-size:13px;line-height:1.5}
-  .info{background:#102a3a;border:1px solid #1f4a6a;color:#cef;padding:10px 12px;border-radius:8px;margin-bottom:12px;font-size:13px;line-height:1.5}
+  .err{background:#3a1020;border:1px solid #6a2030;color:#ffd;padding:10px 12px;border-radius:9px;margin-bottom:12px;font-size:13px;line-height:1.5}
+  .ok{background:#10331a;border:1px solid #225a30;color:#cfc;padding:10px 12px;border-radius:9px;margin-bottom:12px;font-size:13px;line-height:1.5}
+  .info{background:#102a3a;border:1px solid #1f4a6a;color:#cef;padding:10px 12px;border-radius:9px;margin-bottom:12px;font-size:13px;line-height:1.5}
   .badge{display:inline-block;padding:3px 9px;border-radius:6px;font-size:11.5px;font-weight:800;margin-left:6px;vertical-align:middle}
   .badge-paid{background:#22c55e;color:#04210f}
   .badge-trial{background:#f59e0b;color:#2a1700}
@@ -686,7 +763,6 @@ function footer() {
 }
 
 function cardHtml(it) {
-  const cat = CATEGORIES[it.type] || CATEGORIES.movie;
   return `
   <a class="card-item" href="/watch/${htmlEscape(it.id)}">
     <div class="poster" style="background-image:url('${htmlEscape(it.poster || "")}')">
@@ -719,7 +795,7 @@ function buildPager(page, totalPages, hrefFor) {
 }
 
 /* ══════════════════════════════════════════════════
-   HOME PAGE  (slider uses slide_image fallback to poster)
+   HOME PAGE
    ══════════════════════════════════════════════════ */
 function homePage(slides, sections) {
   const slideEls = slides.map((s) => `
@@ -804,11 +880,7 @@ ${footer()}`;
 }
 
 /* ══════════════════════════════════════════════════
-   WATCH PAGE  — signed stream URLs only (no real link in HTML)
-   `streams` is precomputed server-side:
-     - movie/adult: { video, dl }
-     - series: seasons[].episodes[] each { video, dl }
-   When user is gated, streams are empty strings → nothing leaks.
+   WATCH PAGE  — Plyr player, signed stream URLs only
    ══════════════════════════════════════════════════ */
 function watchPage(item, user, gated, streams) {
   const cat = CATEGORIES[item.type] || CATEGORIES.movie;
@@ -816,6 +888,7 @@ function watchPage(item, user, gated, streams) {
 
   let playerArea = "";
   let seriesNav = "";
+  const posterImg = htmlEscape(item.slide_image || item.poster || "");
 
   if (item.type === "series") {
     const seasons = Array.isArray(item.seasons) ? item.seasons : [];
@@ -844,7 +917,7 @@ function watchPage(item, user, gated, streams) {
       </div>`;
     playerArea = `
       <div class="player-box">
-        <video id="cmPlayer" controls controlsList="nodownload" playsinline preload="metadata" poster="${htmlEscape(item.slide_image || item.poster || "")}"></video>
+        <video id="cmPlayer" playsinline controls crossorigin poster="${posterImg}"></video>
         <div class="player-empty" id="playerEmpty">▶ အပိုင်းတစ်ခုကို ရွေးပါ</div>
       </div>
       <div class="now-playing" id="nowPlaying"></div>`;
@@ -852,7 +925,7 @@ function watchPage(item, user, gated, streams) {
     const st = streams.single || { video: "", dl: "" };
     playerArea = `
       <div class="player-box">
-        <video id="cmPlayer" controls controlsList="nodownload" playsinline preload="metadata" poster="${htmlEscape(item.slide_image || item.poster || "")}"
+        <video id="cmPlayer" playsinline controls crossorigin poster="${posterImg}"
           data-video="${htmlEscape(st.video || "")}" data-dl="${htmlEscape(st.dl || "")}"></video>
       </div>`;
   }
@@ -865,35 +938,37 @@ function watchPage(item, user, gated, streams) {
     </div>` : "";
 
   const extraCss = `
+    :root{--plyr-color-main:var(--acc2);--plyr-video-control-color:#fff;--plyr-video-background:#000;--plyr-menu-background:#0d1424;--plyr-menu-color:#eef2ff;--plyr-control-radius:8px}
     .watch{display:grid;grid-template-columns:1fr;gap:22px;margin:18px 0}
-    @media(min-width:900px){ .watch.has-info{grid-template-columns:1fr 320px} }
-    .player-box{position:relative;background:#000;border-radius:14px;overflow:hidden;aspect-ratio:16/9;box-shadow:0 10px 34px rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center}
+    @media(min-width:900px){ .watch.has-info{grid-template-columns:1fr 330px} }
+    .player-box{position:relative;background:#000;border-radius:16px;overflow:hidden;aspect-ratio:16/9;box-shadow:0 14px 40px rgba(0,0,0,.65)}
+    .player-box .plyr{height:100%;border-radius:16px}
     .player-box video{width:100%;height:100%;background:#000;object-fit:contain;display:block}
-    .player-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--mut);font-size:15px;font-weight:600;background:#0a0e1a}
+    .player-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--mut);font-size:15px;font-weight:600;background:#080c18;z-index:5}
     .player-empty.hide{display:none}
-    .meta-title{font-size:24px;font-weight:900;margin:0 0 8px}
-    .meta-cat{display:inline-block;font-size:11px;font-weight:800;padding:4px 10px;border-radius:6px;background:#161d31;margin-bottom:12px;letter-spacing:.4px}
+    .meta-title{font-size:25px;font-weight:900;margin:0 0 8px}
+    .meta-cat{display:inline-block;font-size:11px;font-weight:800;padding:4px 11px;border-radius:7px;background:#131b2e;margin-bottom:12px;letter-spacing:.4px}
     .meta-note{color:#cfd6e8;font-size:14px;line-height:1.75;margin:0 0 18px;white-space:pre-wrap}
-    .actions{display:flex;gap:12px;flex-wrap:wrap;margin:6px 0 4px}
-    .actions a,.actions button{flex:1 1 170px;max-width:280px;text-align:center;padding:13px 18px;border-radius:10px;border:0;cursor:pointer;font-weight:800;font-size:15px;text-decoration:none;font-family:inherit;display:inline-flex;align-items:center;justify-content:center;gap:8px}
+    .actions{display:flex;gap:12px;flex-wrap:wrap;margin:16px 0 4px}
+    .actions a,.actions button{flex:1 1 170px;max-width:280px;text-align:center;padding:13px 18px;border-radius:11px;border:0;cursor:pointer;font-weight:800;font-size:15px;text-decoration:none;font-family:inherit;display:inline-flex;align-items:center;justify-content:center;gap:8px;transition:.15s}
     .btn-play{background:#fff;color:#111}
     .btn-play:hover{background:var(--acc);color:#fff}
     .btn-dl{background:linear-gradient(135deg,var(--acc),var(--acc2));color:#fff}
     .btn-dl:hover{filter:brightness(1.1)}
-    .gate{background:#2a1420;border:1px solid #6a2030;color:#ffd;padding:12px 14px;border-radius:10px;margin:14px 0;font-size:14px;line-height:1.6}
+    .gate{background:#2a1420;border:1px solid #6a2030;color:#ffd;padding:12px 14px;border-radius:11px;margin:14px 0;font-size:14px;line-height:1.6}
     .gate a{color:var(--acc2);font-weight:800}
     .now-playing{margin-top:12px;color:var(--acc2);font-weight:700;font-size:14px;min-height:18px}
-    .seasons{margin-top:20px}
+    .seasons{margin-top:22px}
     .season-tabs{display:flex;gap:8px;overflow-x:auto;padding-bottom:10px;scrollbar-width:none}
     .season-tabs::-webkit-scrollbar{display:none}
-    .season-tab{flex:0 0 auto;padding:8px 16px;border-radius:9px;border:1px solid var(--line);background:#161d31;color:#fff;font-weight:700;font-size:13.5px;cursor:pointer;font-family:inherit}
+    .season-tab{flex:0 0 auto;padding:8px 17px;border-radius:10px;border:1px solid var(--line);background:#131b2e;color:#fff;font-weight:700;font-size:13.5px;cursor:pointer;font-family:inherit;transition:.15s}
     .season-tab.on{background:linear-gradient(135deg,var(--acc),var(--acc2));border-color:transparent}
     .ep-list{display:none;flex-direction:column;gap:8px;margin-top:6px}
     .ep-list.on{display:flex}
-    .ep-btn{display:flex;align-items:center;gap:12px;width:100%;text-align:left;padding:11px 14px;border-radius:10px;border:1px solid var(--line);background:#101626;color:#fff;cursor:pointer;font-family:inherit;transition:.12s}
-    .ep-btn:hover{border-color:var(--acc2);background:#161d31}
+    .ep-btn{display:flex;align-items:center;gap:12px;width:100%;text-align:left;padding:11px 14px;border-radius:11px;border:1px solid var(--line);background:#0d1424;color:#fff;cursor:pointer;font-family:inherit;transition:.14s}
+    .ep-btn:hover{border-color:var(--acc2);background:#131b2e}
     .ep-btn.playing{border-color:var(--acc);background:#1e1420}
-    .ep-no{flex:0 0 32px;height:32px;border-radius:8px;background:#1c2740;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px}
+    .ep-no{flex:0 0 32px;height:32px;border-radius:9px;background:#1a2540;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px}
     .ep-btn.playing .ep-no{background:var(--acc)}
     .ep-tt{flex:1;font-size:14px;font-weight:600}
     .ep-play{opacity:.6;font-size:13px}
@@ -939,6 +1014,19 @@ ${footer()}`;
   var nowEl=document.getElementById('nowPlaying');
   var cur={video:'',dl:'',title:''};
 
+  // Plyr init (modern player)
+  var player=null;
+  try{
+    player=new Plyr(v,{
+      controls:['play-large','play','progress','current-time','duration','mute','volume','settings','pip','airplay','fullscreen'],
+      settings:['quality','speed','loop'],
+      speed:{selected:1,options:[0.5,0.75,1,1.25,1.5,2]},
+      ratio:'16:9',
+      keyboard:{focused:true,global:true},
+      tooltips:{controls:true,seek:true}
+    });
+  }catch(_){}
+
   function gateMsg(){
     var loginUrl='/login?next='+encodeURIComponent(location.pathname+location.search);
     location.href = ${loggedIn ? "'/account'" : "loginUrl"};
@@ -947,7 +1035,8 @@ ${footer()}`;
   function setSource(video, dl, title){
     cur.video=video||''; cur.dl=dl||video||''; cur.title=title||'';
     if(emptyEl) emptyEl.classList.add('hide');
-    if(v){ v.src=cur.video; }
+    if(player){ player.source={type:'video',sources:[{src:cur.video,type:'video/mp4'}]}; }
+    else if(v){ v.src=cur.video; }
     if(btnDl){ btnDl.href=cur.dl || '#'; }
     if(nowEl && title){ nowEl.textContent='▶ Now playing: '+title; }
   }
@@ -957,15 +1046,21 @@ ${footer()}`;
     var dv=v.getAttribute('data-video')||''; var dd=v.getAttribute('data-dl')||dv;
     cur.video=dv; cur.dl=dd;
     if(btnDl) btnDl.href=dd||'#';
+    if(dv && player){ player.source={type:'video',sources:[{src:dv,type:'video/mp4'}]}; }
+    else if(dv && v){ v.src=dv; }
   })();` : ``}
+
+  function tryPlay(){
+    if(player){ var p=player.play(); if(p&&p.catch) p.catch(function(){}); }
+    else if(v){ var q=v.play(); if(q&&q.catch) q.catch(function(){}); }
+  }
 
   if(btnPlay){
     btnPlay.addEventListener('click',function(){
       if(GATED){ gateMsg(); return; }
       if(!cur.video){ alert('အပိုင်း / link မရှိသေးပါ'); return; }
-      if(!v.src) v.src=cur.video;
-      var p=v.play(); if(p&&p.catch) p.catch(function(){});
-      v.scrollIntoView({behavior:'smooth',block:'center'});
+      tryPlay();
+      document.querySelector('.player-box').scrollIntoView({behavior:'smooth',block:'center'});
     });
   }
   if(btnDl){
@@ -974,8 +1069,10 @@ ${footer()}`;
       if(!cur.dl){ e.preventDefault(); alert('Download link မရှိသေးပါ'); }
     });
   }
-  if(v){
-    v.addEventListener('play',function(){ if(GATED){ v.pause(); gateMsg(); } });
+  if(GATED && player){
+    player.on('play',function(){ player.pause(); gateMsg(); });
+  } else if(GATED && v){
+    v.addEventListener('play',function(){ v.pause(); gateMsg(); });
   }
 
   ${item.type === "series" ? `
@@ -992,14 +1089,14 @@ ${footer()}`;
       document.querySelectorAll('.ep-btn').forEach(function(x){x.classList.remove('playing');});
       b.classList.add('playing');
       setSource(b.dataset.video, b.dataset.dl, b.dataset.title);
-      var p=v.play(); if(p&&p.catch) p.catch(function(){});
-      v.scrollIntoView({behavior:'smooth',block:'center'});
+      setTimeout(tryPlay,120);
+      document.querySelector('.player-box').scrollIntoView({behavior:'smooth',block:'center'});
     });
   });
   ` : ``}
 })();`;
 
-  return pageShell((item.title || "Watch") + " — CM FLIX", body, { extraCss, script });
+  return pageShell((item.title || "Watch") + " — CM FLIX", body, { extraCss, script, plyr: true });
 }
 
 /* ══════════════════════════════════════════════════
@@ -1008,7 +1105,7 @@ ${footer()}`;
 function keyLoginPage(csrfToken, error = "", info = "", nextUrl = "/") {
   const body = `
 <div class="auth-wrap"><div class="auth-card">
-  <div class="logo-c" style="display:inline-flex;align-items:center;justify-content:center;background:linear-gradient(135deg,var(--acc),var(--acc2))">🎬</div>
+  <div class="auth-logo">${logoMark()}</div>
   <h1>CM FLIX — Key Login</h1>
   <p class="sub">Admin ထံမှ ရရှိသော Key ထည့်ပြီး ဝင်ပါ။ Username / Password မလိုပါ။</p>
   ${error ? `<div class="err">${htmlEscape(error)}</div>` : ""}
@@ -1042,7 +1139,7 @@ function expiredPage(reason = "") {
   const msg = reason || "သင့်ရဲ့ Key သက်တမ်း ကုန်သွားပါပြီ။ သက်တမ်းတိုးရန် Admin ကို ဆက်သွယ်ပါ။";
   const body = `
 <div class="auth-wrap"><div class="auth-card">
-  <div class="logo-c" style="display:inline-flex;align-items:center;justify-content:center;background:linear-gradient(135deg,var(--acc),var(--acc2))">🎬</div>
+  <div class="auth-logo">${logoMark()}</div>
   <h1>Key Expired</h1>
   <p class="sub">${htmlEscape(msg)}</p>
   <a class="btn" href="/login" style="display:block;text-align:center;text-decoration:none;margin-top:10px">Key အသစ်ထည့်ရန်</a>
@@ -1069,8 +1166,8 @@ function accountPage(user, info = "", error = "") {
 <div class="auth-wrap"><div class="auth-card" style="max-width:560px">
   <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
     <div>
-      <h1 style="margin:0">My Key</h1>
-      <p class="sub" style="margin:4px 0 0"><code style="color:var(--acc2)">${htmlEscape(user.keyId)}</code> ${roleBadge}</p>
+      <h1 style="margin:0;text-align:left">My Key</h1>
+      <p class="sub" style="margin:4px 0 0;text-align:left"><code style="color:var(--acc2)">${htmlEscape(user.keyId)}</code> ${roleBadge}</p>
     </div>
     <a href="/" style="color:var(--acc2);text-decoration:none;font-weight:700;font-size:13px">← Home</a>
   </div>
@@ -1084,9 +1181,9 @@ function accountPage(user, info = "", error = "") {
     </div>
   </div>
   <h3 style="margin:24px 0 10px;font-size:15px">ချိတ်ဆက်ထားသော Device (${devices.length}/${MAX_DEVICES_PER_KEY})</h3>
-  <div style="overflow:auto;border:1px solid var(--line);border-radius:10px">
+  <div style="overflow:auto;border:1px solid var(--line);border-radius:11px">
     <table style="width:100%;border-collapse:collapse;font-size:12.5px">
-      <thead><tr style="background:#152033;text-align:left"><th>Device</th><th>Last seen</th></tr></thead>
+      <thead><tr style="background:#131f33;text-align:left"><th>Device</th><th>Last seen</th></tr></thead>
       <tbody>${devRows || '<tr><td colspan="2" style="padding:18px;text-align:center;color:var(--mut)">Device မရှိသေးပါ</td></tr>'}</tbody>
     </table>
   </div>
@@ -1100,7 +1197,7 @@ function accountPage(user, info = "", error = "") {
 }
 
 /* ══════════════════════════════════════════════════
-   ADMIN PAGE  (now includes Slide Image field)
+   ADMIN PAGE
    ══════════════════════════════════════════════════ */
 function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], itPage = 1, itTotalPages = 1, itQuery = "", itTotal = 0, itType = "") {
   const keyRows = keys.map(k => {
@@ -1148,7 +1245,7 @@ function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], i
       <td style="width:54px"><div class="thumb" style="background-image:url('${htmlEscape(m.poster || "")}')">${m.poster ? "" : "🎬"}</div></td>
       <td><a href="/watch/${htmlEscape(m.id)}" target="_blank" style="color:#cef;text-decoration:none;font-weight:600">${htmlEscape(m.title || "Untitled")}</a>
         <div style="font-size:10.5px;color:var(--mut)"><code>${htmlEscape(m.id)}</code>${m.slide_image ? ' · 🖼️ slide' : ''}</div></td>
-      <td><span class="badge" style="background:#1c2740;color:#cde">${cat.icon} ${htmlEscape(cat.name)}</span></td>
+      <td><span class="badge" style="background:#1a2540;color:#cde">${cat.icon} ${htmlEscape(cat.name)}</span></td>
       <td style="white-space:nowrap;font-size:11.5px">${m.created_at ? new Date(m.created_at).toLocaleDateString("en-GB", { timeZone: "Asia/Yangon" }) : "—"}</td>
       <td>
         <a class="btn-ext" href="/admin/edit/${htmlEscape(m.id)}" style="text-decoration:none">Edit</a>
@@ -1172,15 +1269,18 @@ function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], i
   const body = `
 <div class="auth-wrap" style="align-items:flex-start;padding-top:24px"><div class="auth-card" style="max-width:1120px">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
-    <div>
-      <h1 style="margin:0;font-size:22px">🎬 CM FLIX · Admin</h1>
-      <p class="sub" style="margin:4px 0 0">
-        Keys: <strong>${stats.total}</strong> ·
-        <span style="color:#6f6">Active ${stats.active}</span> ·
-        <span style="color:#f66">Expired ${stats.expired}</span> ·
-        Paid ${stats.paid} · Trial ${stats.trial} ·
-        🎞️ Content ${itTotal}
-      </p>
+    <div style="display:flex;align-items:center;gap:12px">
+      ${logoMark()}
+      <div>
+        <h1 style="margin:0;font-size:22px;text-align:left">CM FLIX · Admin</h1>
+        <p class="sub" style="margin:4px 0 0;text-align:left">
+          Keys: <strong>${stats.total}</strong> ·
+          <span style="color:#6f6">Active ${stats.active}</span> ·
+          <span style="color:#f66">Expired ${stats.expired}</span> ·
+          Paid ${stats.paid} · Trial ${stats.trial} ·
+          🎞️ Content ${itTotal}
+        </p>
+      </div>
     </div>
     <div style="display:flex;gap:8px;align-items:center">
       <a href="/" target="_blank" style="color:var(--acc2);text-decoration:none;font-weight:700;font-size:13px;padding:6px 12px;border:1px solid var(--line);border-radius:6px">View Site</a>
@@ -1192,7 +1292,7 @@ function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], i
   ${newKeyBox}
 
   <!-- ════ ADD CONTENT ════ -->
-  <div id="content" style="background:#15101f;border:1px solid #3a1f3f;border-radius:12px;padding:16px;margin-bottom:18px">
+  <div id="content" style="background:#15101f;border:1px solid #3a1f3f;border-radius:13px;padding:16px;margin-bottom:18px">
     <div style="font-weight:800;color:var(--acc2);margin-bottom:10px">➕ Content အသစ် တင်ရန် (Signed-link stream — link မပေါက်ကြား)</div>
     <form method="POST" action="/admin/item/create" id="addForm">
       <input type="hidden" name="csrf_token" value="${htmlEscape(csrfToken)}">
@@ -1237,15 +1337,15 @@ function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], i
     <button type="submit" class="btn" style="width:auto;margin:0;padding:11px 18px">Search</button>
   </form>
   ${items.length ? `
-  <div style="overflow:auto;border:1px solid var(--line);border-radius:10px;margin-bottom:6px">
+  <div style="overflow:auto;border:1px solid var(--line);border-radius:11px;margin-bottom:6px">
     <table style="width:100%;border-collapse:collapse;font-size:13px;min-width:640px">
       <thead><tr style="background:#15101f;text-align:left"><th></th><th>Title / ID</th><th>Type</th><th>Added</th><th>Action</th></tr></thead>
       <tbody>${itemRows}</tbody>
     </table>
-  </div>${itemPager}` : `<div style="text-align:center;color:var(--mut);padding:24px;border:1px solid var(--line);border-radius:10px;margin-bottom:16px">${itQuery || itType ? "မတွေ့ပါ" : "Content မရှိသေးပါ"}</div>`}
+  </div>${itemPager}` : `<div style="text-align:center;color:var(--mut);padding:24px;border:1px solid var(--line);border-radius:11px;margin-bottom:16px">${itQuery || itType ? "မတွေ့ပါ" : "Content မရှိသေးပါ"}</div>`}
 
   <!-- ════ CREATE KEY ════ -->
-  <div style="background:#101a2c;border:1px solid var(--line);border-radius:12px;padding:16px;margin:20px 0 16px">
+  <div style="background:#0e1830;border:1px solid var(--line);border-radius:13px;padding:16px;margin:20px 0 16px">
     <div style="font-weight:800;color:#cef;margin-bottom:10px">🔑 Key အသစ် ဖန်တီးရန်</div>
     <form method="POST" action="/admin/create" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
       <input type="hidden" name="csrf_token" value="${htmlEscape(csrfToken)}">
@@ -1261,7 +1361,7 @@ function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], i
     <input id="q" type="text" placeholder="🔍 Key / note ရှာရန်…" oninput="filterRows()" style="flex:1;min-width:180px">
     <select id="statusFilter" onchange="filterRows()" style="width:auto"><option value="">All status</option><option value="active">Active</option><option value="expired">Expired</option></select>
   </div>
-  <div id="bulkBar" style="display:none;background:#152033;border:1px solid var(--line);border-radius:8px;padding:10px;margin-bottom:10px;align-items:center;gap:8px;flex-wrap:wrap">
+  <div id="bulkBar" style="display:none;background:#131f33;border:1px solid var(--line);border-radius:9px;padding:10px;margin-bottom:10px;align-items:center;gap:8px;flex-wrap:wrap">
     <span id="bulkCount" style="color:#cef;font-weight:600">0 selected</span>
     <form method="POST" action="/admin/bulk" style="display:flex;gap:6px;align-items:center;margin:0">
       <input type="hidden" name="csrf_token" value="${htmlEscape(csrfToken)}">
@@ -1271,9 +1371,9 @@ function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], i
       <button type="submit" name="action" value="delete" class="btn-del" onclick="return confirm('Delete all selected?')">Delete all</button>
     </form>
   </div>
-  <div style="overflow:auto;border:1px solid var(--line);border-radius:10px">
+  <div style="overflow:auto;border:1px solid var(--line);border-radius:11px">
     <table style="width:100%;border-collapse:collapse;font-size:13px;min-width:860px">
-      <thead><tr style="background:#152033;text-align:left">
+      <thead><tr style="background:#131f33;text-align:left">
         <th style="width:28px"><input type="checkbox" id="checkAll" onclick="toggleAll(this)"></th>
         <th>Key</th><th>Status</th><th>Type</th><th>Expires</th><th>Devices</th><th>Note</th><th>Action</th>
       </tr></thead>
@@ -1284,12 +1384,12 @@ function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], i
 <style>
   th,td{padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:middle}
   th{font-size:11.5px;color:var(--mut);text-transform:uppercase;letter-spacing:.5px}
-  tr:hover td{background:#101a2c}
-  .btn-ext,.btn-del,.btn-reset{width:auto;margin:0;padding:6px 10px;font-size:12px;border-radius:6px;border:0;font-weight:700;cursor:pointer;font-family:inherit;display:inline-block}
+  tr:hover td{background:#0e1830}
+  .btn-ext,.btn-del,.btn-reset{width:auto;margin:0;padding:6px 10px;font-size:12px;border-radius:7px;border:0;font-weight:700;cursor:pointer;font-family:inherit;display:inline-block}
   .btn-ext{background:var(--acc2);color:#fff}
   .btn-reset{background:#f59e0b;color:#2a1700;margin-left:6px}
   .btn-del{background:#c43;color:#fff;margin-left:6px}
-  .thumb{width:36px;height:52px;border-radius:5px;background-size:cover;background-position:center;background-color:#101a2c;display:flex;align-items:center;justify-content:center;font-size:16px}
+  .thumb{width:36px;height:52px;border-radius:6px;background-size:cover;background-position:center;background-color:#0e1830;display:flex;align-items:center;justify-content:center;font-size:16px}
 </style>
 <script>
   function filterRows(){
@@ -1322,7 +1422,7 @@ function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], i
 }
 
 /* ══════════════════════════════════════════════════
-   ADMIN EDIT PAGE  (with Slide Image)
+   ADMIN EDIT PAGE
    ══════════════════════════════════════════════════ */
 function adminEditPage(item, csrfToken, error = "") {
   const isSeries = item.type === "series";
@@ -1330,7 +1430,7 @@ function adminEditPage(item, csrfToken, error = "") {
   const body = `
 <div class="auth-wrap" style="align-items:flex-start;padding-top:24px"><div class="auth-card" style="max-width:760px">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-    <h1 style="margin:0;font-size:20px">✏️ Edit — ${htmlEscape(item.title)}</h1>
+    <h1 style="margin:0;font-size:20px;text-align:left">✏️ Edit — ${htmlEscape(item.title)}</h1>
     <a href="/admin#content" style="color:var(--acc2);text-decoration:none;font-weight:700;font-size:13px">← Back</a>
   </div>
   ${error ? `<div class="err">${htmlEscape(error)}</div>` : ""}
@@ -1403,11 +1503,10 @@ function sanitizeSeasons(raw) {
 }
 
 /* ══════════════════════════════════════════════════
-   Build signed streams for watchPage (server-side only)
+   Build signed streams for watchPage
    ══════════════════════════════════════════════════ */
 async function buildStreams(env, item, gated, user) {
   if (gated) {
-    // gated ဖြစ်ရင် link လုံးဝ မထုတ်ဘူး
     if (item.type === "series") return { seasons: [] };
     return { single: { video: "", dl: "" } };
   }
@@ -1433,7 +1532,6 @@ async function buildStreams(env, item, gated, user) {
   }
 }
 
-// signed request → real R2 link ကို resolve
 function resolveRealUrl(item, s, e, download) {
   if (item.type === "series") {
     const seasons = Array.isArray(item.seasons) ? item.seasons : [];
@@ -1465,7 +1563,6 @@ export async function onRequest(context) {
       { type: "series", items: byType("series").slice(0, HOME_PREVIEW_COUNT) },
       { type: "adult",  items: byType("adult").slice(0, HOME_PREVIEW_COUNT) },
     ];
-    // hero slides = slide_image ရှိတဲ့အရာတွေ ဦးစားပေး၊ မရှိရင် poster fallback
     const withImg = all.filter(i => i.slide_image || i.poster);
     const slidePool = withImg.slice(0, 6);
     const slides = slidePool.map(i => ({
@@ -1528,36 +1625,30 @@ export async function onRequest(context) {
     return new Response(watchPage(item, user, gated, streams), { headers: { "content-type": "text/html; charset=utf-8" } });
   }
 
-  // ───────────── STREAM (signed) — Worker PROXY (real link ဘယ်တော့မှ မပေါက်ကြား) ─────────────
+  // ───────────── STREAM (signed) — Worker PROXY ─────────────
   if (path.startsWith("/stream/") && method === "GET") {
     const id = decodeURIComponent(path.slice("/stream/".length).split("/")[0]);
     const item = await getItem(env, id);
     if (!item) return new Response("Not found", { status: 404 });
 
-    // 1) signature စစ် — expire / badsig ဆို ချက်ချင်း ပိတ်
     const v = await verifyStreamSig(env, id, url.searchParams);
     if (!v.ok) {
       return new Response(v.reason === "expired" ? "Link expired" : "Invalid link", { status: 403 });
     }
 
-    // 2) login + valid user ဖြစ်မှသာ ဖွင့်ပေး
     const user = await getCurrentUser(request, env);
     if (!user || isExpired(user)) {
       return new Response("Login required", { status: 403 });
     }
 
-    // 3) link ကို ထုတ်ပေးခဲ့သူနဲ့ session တူမတူ (binding)
     const u = await userStreamTag(user);
     if (v.u && !safeEqual(v.u, u)) {
       return new Response("Link not valid for this session", { status: 403 });
     }
 
-    // 4) real R2 / origin link ကို resolve — client ဆီ ဘယ်တော့မှ မပေးဘူး
     const real = resolveRealUrl(item, v.s, v.e, v.d === 1);
     if (!isHttpUrl(real)) return new Response("No source", { status: 404 });
 
-    // 5) Worker ကိုယ်တိုင် origin ဆီကနေ fetch (proxy / ရေပိုက်နည်း)
-    //    Range header ကို pass-through → seek / ဖြတ်ကျော်ကြည့်ခြင်း အလုပ်လုပ်အောင်
     const rangeHeader = request.headers.get("Range");
     const fwdHeaders = new Headers();
     if (rangeHeader) fwdHeaders.set("Range", rangeHeader);
@@ -1566,11 +1657,7 @@ export async function onRequest(context) {
 
     let originResp;
     try {
-      originResp = await fetch(real, {
-        method: "GET",
-        headers: fwdHeaders,
-        redirect: "follow",
-      });
+      originResp = await fetch(real, { method: "GET", headers: fwdHeaders, redirect: "follow" });
     } catch (_) {
       return new Response("Upstream error", { status: 502 });
     }
@@ -1579,7 +1666,6 @@ export async function onRequest(context) {
       return new Response("Upstream unavailable", { status: 502 });
     }
 
-    // 6) response headers ကို သန့်ရှင်းအောင် ပြန်တည်ဆောက် — origin link / internal info မပေါက်အောင်
     const outHeaders = new Headers();
     const copyHeader = (name) => {
       const val = originResp.headers.get(name);
@@ -1592,22 +1678,14 @@ export async function onRequest(context) {
     copyHeader("Last-Modified");
     copyHeader("ETag");
 
-    // Content-Type မရှိရင် mp4 default
     if (!outHeaders.has("Content-Type")) outHeaders.set("Content-Type", "video/mp4");
-    // Range support ကို client သိအောင်
     if (!outHeaders.has("Accept-Ranges")) outHeaders.set("Accept-Ranges", "bytes");
-
-    // signed link မို့ cache မလုပ်စေချင်
     outHeaders.set("Cache-Control", "private, no-store");
-    // referrer / origin info မပေါက်အောင်
     outHeaders.set("X-Content-Type-Options", "nosniff");
 
-    // 7) download mode ဆို attachment အဖြစ် ဖိုင်နာမည်ပေး
     if (v.d === 1) {
       const safeName = (item.title || "video")
-        .replace(/[^\w\-. ]+/g, "_")
-        .slice(0, 80)
-        .trim() || "video";
+        .replace(/[^\w\-. ]+/g, "_").slice(0, 80).trim() || "video";
       const ext = real.split("?")[0].split(".").pop();
       const fname = /^[a-z0-9]{2,5}$/i.test(ext) ? `${safeName}.${ext}` : `${safeName}.mp4`;
       outHeaders.set("Content-Disposition", `attachment; filename="${fname}"`);
@@ -1615,14 +1693,8 @@ export async function onRequest(context) {
       outHeaders.set("Content-Disposition", "inline");
     }
 
-    // 8) body ကို stream အဖြစ် တိုက်ရိုက် pipe — memory မစား၊ video ချက်ချင်း စီးဆင်း
-    //    origin status (200 / 206) ကို အတိအကျ ပြန်ပေး → Range အလုပ်လုပ်
-    return new Response(originResp.body, {
-      status: originResp.status,
-      headers: outHeaders,
-    });
+    return new Response(originResp.body, { status: originResp.status, headers: outHeaders });
   }
-
 
   // ───────────── AUTH STATUS ─────────────
   if (path === "/auth/status" && method === "GET") {
@@ -1645,6 +1717,7 @@ export async function onRequest(context) {
       return new Response(keyLoginPage(csrfToken, "", "", nextUrl), { headers });
     }
     if (method === "POST") {
+      await lazyCleanup(env);
       const rl = await rateLimitHit(env, `keylogin:${clientIp}`, KEY_LOGIN_MAX_ATTEMPTS, KEY_LOGIN_WINDOW_SEC);
       if (rl.blocked) {
         return new Response(keyLoginPage(csrfToken, "ကြိုးစားခြင်း များနေပါပြီ။ ၁၀ မိနစ်နောက်မှ ထပ်ကြိုးစားပါ"), {
@@ -1714,10 +1787,22 @@ export async function onRequest(context) {
 
     // ADMIN DASHBOARD
     if (path === "/admin" && method === "GET") {
-      const list = await env.AUTH_USERS.list({ prefix: "key:", limit: 1000 });
-      const keys = [];
-      for (const k of list.keys) keys.push({ keyId: k.name.slice(4), ...(k.metadata || {}) });
-      keys.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+      const res = await db(env).prepare(
+        "SELECT key_id, role, created_at, expires_at, note, disabled, devices FROM keys ORDER BY created_at DESC LIMIT 1000"
+      ).all();
+      const keys = (res.results || []).map(r => {
+        let devCount = 0;
+        try { devCount = (JSON.parse(r.devices || "[]") || []).length; } catch (_) {}
+        return {
+          keyId: r.key_id,
+          role: r.role || "trial",
+          created_at: r.created_at || 0,
+          expires_at: r.expires_at || 0,
+          note: r.note || "",
+          disabled: !!r.disabled,
+          device_count: devCount,
+        };
+      });
       const now = Date.now();
       const stats = {
         total: keys.length,
@@ -1881,11 +1966,12 @@ export async function onRequest(context) {
       const keyId = normalizeKey(form.key);
       const k = await getKey(env, keyId);
       if (k) {
-        if (Array.isArray(k.devices)) for (const d of k.devices) if (d.id) await env.AUTH_USERS.delete(`kdev:${d.id}`);
+        const stmts = [];
+        if (Array.isArray(k.devices)) for (const d of k.devices) if (d.id) stmts.push(db(env).prepare("DELETE FROM kdev WHERE device_id=?").bind(d.id));
+        stmts.push(db(env).prepare("DELETE FROM sessions WHERE key_id=?").bind(keyId));
+        if (stmts.length) await db(env).batch(stmts);
         k.devices = [];
         await putKey(env, keyId, k);
-        const sl = await env.AUTH_USERS.list({ prefix: `sess:${keyId}:` });
-        for (const s of sl.keys) await env.AUTH_USERS.delete(s.name);
       }
       return Response.redirect(new URL("/admin", url).toString(), 302);
     }
@@ -1923,18 +2009,21 @@ export async function onRequest(context) {
 
     // EXPORT CSV
     if (path === "/admin/export" && method === "GET") {
-      const list = await env.AUTH_USERS.list({ prefix: "key:", limit: 1000 });
+      const res = await db(env).prepare(
+        "SELECT key_id, role, created_at, expires_at, note, disabled, devices FROM keys ORDER BY created_at DESC LIMIT 5000"
+      ).all();
       const rows = [["key", "role", "created_at", "expires_at", "device_count", "note", "disabled"]];
-      for (const k of list.keys) {
-        const m = k.metadata || {};
+      for (const r of (res.results || [])) {
+        let devCount = 0;
+        try { devCount = (JSON.parse(r.devices || "[]") || []).length; } catch (_) {}
         rows.push([
-          k.name.slice(4), m.role || "trial",
-          m.created_at ? new Date(m.created_at).toISOString() : "",
-          m.expires_at ? new Date(m.expires_at).toISOString() : "",
-          m.device_count || 0, m.note || "", m.disabled ? "yes" : "no",
+          r.key_id, r.role || "trial",
+          r.created_at ? new Date(r.created_at).toISOString() : "",
+          r.expires_at ? new Date(r.expires_at).toISOString() : "",
+          devCount, r.note || "", r.disabled ? "yes" : "no",
         ]);
       }
-      const csv = rows.map(r => r.map(c => {
+      const csv = rows.map(rw => rw.map(c => {
         const s = String(c == null ? "" : c);
         return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
       }).join(",")).join("\n");
