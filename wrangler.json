@@ -1,0 +1,12 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "cm-flix",
+  "pages_build_output_dir": "public",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "cmflix-db",
+      "database_id": "a50afdd6-df97-4667-948c-673a06a4d6f1"
+    }
+  ]
+}
