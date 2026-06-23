@@ -1,11 +1,10 @@
 // functions/[[path]].js  — PART 1 of 2
 // ════════════════════════════════════════════════════════════════
 //  CM FLIX — Self-hosted Movie / Series streaming app
-//  • NO proxy (direct R2 / direct mp4 links only)
-//  • NO telegram, NO sarbaelay
+//  • Signed / expiring URL streaming (real R2/mp4 link NEVER in HTML)
 //  • Key-only login (admin-created keys, device-limited)
-//  • Categories: Movies / Series / 21+
-//  • Series with Season → Episode structure
+//  • Categories: Movies / Series / 21+  (Series: Season → Episode)
+//  • Slider supports separate landscape banner image (slide_image)
 //  • Production-grade Admin panel + secure session
 // ════════════════════════════════════════════════════════════════
 
@@ -16,13 +15,17 @@ const CSRF_COOKIE      = "__Host-cmflix_csrf";
 const MAX_DEVICES_PER_KEY = 2;
 const KEY_PREFIX       = "CM";
 
+// ── Signed stream URL ──
+const STREAM_TTL_SEC   = 6 * 3600;   // signed link 6 နာရီ ကြာရင် expire
+const STREAM_SECRET_FALLBACK = "SESSION_SECRET"; // env.STREAM_SECRET မရှိရင် SESSION_SECRET သုံးမယ်
+
 // Rate limit
 const KEY_LOGIN_MAX_ATTEMPTS = 12;
 const KEY_LOGIN_WINDOW_SEC   = 600;
 
 // ── Pagination ──
-const HOME_PREVIEW_COUNT   = 7;    // home မှာ category တစ်ခုစီ ပြမယ့် အရေအတွက်
-const ITEMS_PER_PAGE       = 15;   // see all / category grid → 15 ပြီးရင် next
+const HOME_PREVIEW_COUNT   = 7;
+const ITEMS_PER_PAGE       = 15;
 const ADMIN_ITEMS_PER_PAGE = 20;
 
 // ── Categories (fixed) ──
@@ -76,7 +79,6 @@ function randomToken(len = 24) {
   return s;
 }
 
-// ── Human-friendly key: CM-AB3D-7K9M-XQ2P ──
 function generateKey() {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   const arr = new Uint8Array(12);
@@ -193,8 +195,49 @@ function shortDeviceLabel(request) {
 }
 
 /* ══════════════════════════════════════════════════
+   SIGNED STREAM URL  (real R2 link never exposed in HTML)
+   /stream/<itemId>?s=<season>&e=<ep>&d=<0|1>&exp=<ms>&u=<sidShort>&sig=<hmac>
+   ══════════════════════════════════════════════════ */
+function streamSecret(env) {
+  return env.STREAM_SECRET || env.SESSION_SECRET || STREAM_SECRET_FALLBACK;
+}
+
+// canonical string ကို sign / verify နှစ်ဖက်လုံး တူညီအောင်
+function streamSignBase(itemId, s, e, d, exp, u) {
+  return `${itemId}|${s}|${e}|${d}|${exp}|${u}`;
+}
+
+// signed path တစ်ခု ဖန်တီးပေးတယ် (u = session id short, link ကို user နဲ့ bind ဖို့)
+async function makeStreamUrl(env, itemId, { s = -1, e = -1, download = false, u = "" } = {}) {
+  const exp = Date.now() + STREAM_TTL_SEC * 1000;
+  const d = download ? 1 : 0;
+  const sig = await hmacSign(streamSecret(env), streamSignBase(itemId, s, e, d, exp, u));
+  const qs = new URLSearchParams();
+  qs.set("s", String(s));
+  qs.set("e", String(e));
+  qs.set("d", String(d));
+  qs.set("exp", String(exp));
+  if (u) qs.set("u", u);
+  qs.set("sig", sig);
+  return `/stream/${encodeURIComponent(itemId)}?${qs.toString()}`;
+}
+
+// signed query ကို verify လုပ်တယ် → ok ဖြစ်ရင် {s,e,d} ပြန်ပေး
+async function verifyStreamSig(env, itemId, params) {
+  const s = parseInt(params.get("s") ?? "-1", 10);
+  const e = parseInt(params.get("e") ?? "-1", 10);
+  const d = parseInt(params.get("d") ?? "0", 10) === 1 ? 1 : 0;
+  const exp = parseInt(params.get("exp") ?? "0", 10);
+  const u = params.get("u") || "";
+  const sig = params.get("sig") || "";
+  if (!exp || Date.now() > exp) return { ok: false, reason: "expired" };
+  const expected = await hmacSign(streamSecret(env), streamSignBase(itemId, s, e, d, exp, u));
+  if (!safeEqual(sig, expected)) return { ok: false, reason: "badsig" };
+  return { ok: true, s, e, d, u };
+}
+
+/* ══════════════════════════════════════════════════
    KEY STORAGE  (KV namespace: AUTH_USERS)
-   key:<KEYID> → JSON
    ══════════════════════════════════════════════════ */
 async function getKey(env, keyId) {
   if (!keyId) return null;
@@ -239,15 +282,10 @@ function isKeyExpired(k) {
    CONTENT STORAGE  (KV namespace: AUTH_USERS)
    item:<ID> → JSON
    {
-     id, type: "movie"|"series"|"adult",
-     title, poster, note, created_at,
-     // movie / adult:
-     video_url, download_url,
-     // series:
-     seasons: [ { season: 1, episodes: [ {ep, title, video_url, download_url} ] } ]
+     id, type, title, poster, slide_image, note, created_at,
+     video_url, download_url,                       // movie/adult
+     seasons:[{season,episodes:[{ep,title,video_url,download_url}]}]  // series
    }
-   Metadata (title/poster/type/created_at) duplicated so list pages
-   avoid N+1 reads → KV-read-limit safe.
    ══════════════════════════════════════════════════ */
 function generateItemId() {
   const arr = new Uint8Array(8);
@@ -268,6 +306,7 @@ async function putItem(env, id, data) {
   const meta = {
     title: (data.title || "").slice(0, 90),
     poster: (data.poster || "").slice(0, 500),
+    slide_image: (data.slide_image || "").slice(0, 500),
     type: data.type || "movie",
     created_at: data.created_at || 0,
   };
@@ -278,7 +317,7 @@ async function deleteItem(env, id) {
   await env.AUTH_USERS.delete(`item:${id}`);
 }
 
-// All item summaries (metadata only, 1 list op, no N+1)
+// All item summaries (metadata only, no N+1)
 async function listItems(env) {
   const items = [];
   let cursor = undefined;
@@ -290,6 +329,7 @@ async function listItems(env) {
         id: k.name.slice(5),
         title: m.title || "",
         poster: m.poster || "",
+        slide_image: m.slide_image || "",
         type: m.type || "movie",
         created_at: m.created_at || 0,
       });
@@ -354,6 +394,12 @@ function isExpired(user) {
   if (user.disabled) return true;
   if (!user.expires_at) return true;
   return Date.now() > user.expires_at;
+}
+
+// session id ကို signed-url binding အတွက် short hash
+async function userStreamTag(user) {
+  if (!user) return "";
+  return (await sha256Hex("u:" + user.keyId + ":" + (user.sid || ""))).slice(0, 12);
 }
 
 function htmlEscape(s) {
@@ -450,19 +496,16 @@ function isHttpUrl(u) {
   return /^https?:\/\//i.test(String(u || "").trim());
 }
 
-/* ── PART 1 ends here. PART 2 uses:
-     getKey/putKey/deleteKey/isKeyExpired/generateKey/normalizeKey,
-     getItem/putItem/deleteItem/listItems/generateItemId,
-     recordSession/revokeSession/getCurrentUser, bindDeviceToKey,
-     deviceIdFrom/shortDeviceLabel/safeNextPath, parseForm/isHttpUrl,
-     CATEGORIES/isValidCategory, all page constants ── */
+/* ── PART 1 ends here. PART 2 uses everything above ── */
 // functions/[[path]].js  — PART 2 of 2  (append directly below PART 1)
 // ════════════════════════════════════════════════════════════════
-//  CM FLIX — UI (movie-app style), routes, video pages, admin panel
+//  CM FLIX — UI, routes, signed-stream player, admin panel
+//  • Player uses /stream/<id>?...sig  (real link never in HTML)
+//  • Slider uses slide_image (landscape) → no blurry poster
 // ════════════════════════════════════════════════════════════════
 
 /* ══════════════════════════════════════════════════
-   GLOBAL STYLES + LOGO
+   GLOBAL STYLES
    ══════════════════════════════════════════════════ */
 const CMFLIX_CSS = `
   *{box-sizing:border-box}
@@ -482,7 +525,6 @@ const CMFLIX_CSS = `
   a{color:inherit}
   .wrap{max-width:1180px;margin:0 auto;padding:0 16px}
 
-  /* Top bar */
   .topbar{position:sticky;top:0;z-index:200;display:flex;align-items:center;gap:14px;
     padding:12px 16px;background:rgba(8,11,20,.82);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
   .brand{display:flex;align-items:center;gap:9px;text-decoration:none;font-weight:900;font-size:22px;letter-spacing:.5px;white-space:nowrap}
@@ -501,7 +543,6 @@ const CMFLIX_CSS = `
   .topbar .acts a:hover{color:#fff}
   @media(max-width:640px){.brand{font-size:18px}.topbar .acts a:not(.me){display:none}}
 
-  /* Nav chips */
   .navchips{display:flex;gap:8px;overflow-x:auto;padding:12px 16px 4px;scrollbar-width:none}
   .navchips::-webkit-scrollbar{display:none}
   .navchips a{flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:22px;
@@ -509,11 +550,12 @@ const CMFLIX_CSS = `
   .navchips a.on{background:linear-gradient(135deg,var(--acc),var(--acc2));border-color:transparent;box-shadow:0 4px 12px rgba(229,9,20,.4)}
   .navchips a:hover{filter:brightness(1.12)}
 
-  /* Hero slider */
+  /* Hero slider — landscape banner, cover-fit */
   .hero{position:relative;margin:14px 0 6px;border-radius:18px;overflow:hidden;border:1px solid var(--line);box-shadow:0 18px 50px rgba(0,0,0,.55)}
   .hero-track{display:flex;transition:transform .55s cubic-bezier(.4,0,.2,1)}
-  .slide{position:relative;min-width:100%;height:300px;background-size:cover;background-position:center;display:flex;align-items:flex-end}
-  .slide::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(7,10,20,.92) 0%,rgba(7,10,20,.55) 45%,rgba(7,10,20,.15) 100%)}
+  .slide{position:relative;min-width:100%;height:340px;display:flex;align-items:flex-end;overflow:hidden;background:#0a0e1a}
+  .slide-bg{position:absolute;inset:0;background-size:cover;background-position:center center;background-repeat:no-repeat}
+  .slide::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(7,10,20,.92) 0%,rgba(7,10,20,.55) 45%,rgba(7,10,20,.12) 100%)}
   .slide-body{position:relative;z-index:2;padding:26px 30px;max-width:620px}
   .slide-tag{display:inline-block;background:var(--acc);color:#fff;font-size:11px;font-weight:800;padding:4px 11px;border-radius:6px;letter-spacing:.5px;margin-bottom:10px}
   .slide-title{font-size:30px;font-weight:900;margin:0 0 8px;line-height:1.15;text-shadow:0 2px 14px rgba(0,0,0,.6)}
@@ -527,22 +569,19 @@ const CMFLIX_CSS = `
     border:0;background:rgba(0,0,0,.45);color:#fff;font-size:20px;cursor:pointer;display:flex;align-items:center;justify-content:center}
   .hero-nav:hover{background:var(--acc)}
   .hero-nav.prev{left:14px}.hero-nav.next{right:14px}
-  @media(max-width:640px){.slide{height:220px}.slide-title{font-size:21px}.slide-desc{display:none}.slide-body{padding:18px}.hero-nav{display:none}}
+  @media(max-width:640px){.slide{height:200px}.slide-title{font-size:20px}.slide-desc{display:none}.slide-body{padding:16px}.hero-nav{display:none}}
 
-  /* Section */
   .section{margin:26px 0}
   .section-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
   .section-head h2{display:flex;align-items:center;gap:9px;font-size:20px;margin:0;font-weight:800}
   .section-head a.seeall{font-size:13px;font-weight:700;color:var(--acc2);text-decoration:none;display:inline-flex;align-items:center;gap:4px}
   .section-head a.seeall:hover{color:#fff}
 
-  /* Grid */
   .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
   @media(min-width:560px){.grid{grid-template-columns:repeat(4,1fr);gap:14px}}
   @media(min-width:820px){.grid{grid-template-columns:repeat(5,1fr)}}
   @media(min-width:1024px){.grid{grid-template-columns:repeat(6,1fr)}}
 
-  /* Card */
   .card-item{display:block;text-decoration:none;border-radius:12px;overflow:hidden;background:var(--card);
     border:1px solid var(--line);transition:transform .15s,border-color .15s,box-shadow .15s;position:relative}
   .card-item:hover{transform:translateY(-4px);border-color:var(--acc2);box-shadow:0 12px 28px rgba(0,0,0,.5)}
@@ -557,10 +596,9 @@ const CMFLIX_CSS = `
   .poster .play-ov{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;opacity:0;transition:.18s;background:rgba(0,0,0,.3)}
   .card-item:hover .play-ov{opacity:1}
   .poster .play-ov span{width:46px;height:46px;border-radius:50%;background:var(--acc);display:flex;align-items:center;justify-content:center;font-size:18px;box-shadow:0 4px 16px rgba(229,9,20,.6)}
-  .c-title{padding:8px 9px 10px;font-size:12.5px;font-weight:600;line-height:1.35;color:#eaf;
+  .c-title{padding:8px 9px 10px;font-size:12.5px;font-weight:600;line-height:1.35;
     display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;color:#e7ecf8}
 
-  /* Pagination */
   .pager{display:flex;gap:6px;align-items:center;justify-content:center;flex-wrap:wrap;margin:28px 0 8px}
   .pager a,.pager span{min-width:40px;text-align:center;padding:9px 13px;border-radius:9px;text-decoration:none;font-size:13.5px;font-weight:700;border:1px solid var(--line);color:#cfe;background:#0f1626}
   .pager a:hover{filter:brightness(1.3);transform:translateY(-1px)}
@@ -594,9 +632,6 @@ ${opts.script ? `<script>${opts.script}</script>` : ""}
 </body></html>`;
 }
 
-/* ══════════════════════════════════════════════════
-   AUTH PAGE SHELL (centered card)  for /login /account /admin
-   ══════════════════════════════════════════════════ */
 const AUTH_CSS = `
   .auth-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
   .auth-card{background:rgba(15,22,38,.94);backdrop-filter:blur(10px);border:1px solid var(--line);border-radius:18px;padding:32px;width:100%;max-width:440px;box-shadow:0 18px 50px rgba(0,0,0,.6)}
@@ -622,9 +657,6 @@ const AUTH_CSS = `
   @keyframes spin{to{transform:rotate(360deg)}}
 `;
 
-/* ══════════════════════════════════════════════════
-   TOP BAR + NAV (shared on content pages)
-   ══════════════════════════════════════════════════ */
 function topBar(activeCat = "", query = "") {
   return `
 <div class="topbar">
@@ -653,9 +685,6 @@ function footer() {
   return `<div class="footer">© ${new Date().getFullYear()} <b>CM FLIX</b> · All rights reserved.</div>`;
 }
 
-/* ══════════════════════════════════════════════════
-   CARD + PAGER HELPERS
-   ══════════════════════════════════════════════════ */
 function cardHtml(it) {
   const cat = CATEGORIES[it.type] || CATEGORIES.movie;
   return `
@@ -691,11 +720,12 @@ function buildPager(page, totalPages, hrefFor) {
 }
 
 /* ══════════════════════════════════════════════════
-   HOME PAGE  (slider ads + 3 category previews)
+   HOME PAGE  (slider uses slide_image fallback to poster)
    ══════════════════════════════════════════════════ */
 function homePage(slides, sections) {
-  const slideEls = slides.map((s, i) => `
-    <div class="slide" style="background-image:url('${htmlEscape(s.poster || "")}')">
+  const slideEls = slides.map((s) => `
+    <div class="slide">
+      <div class="slide-bg" style="background-image:url('${htmlEscape(s.image || "")}')"></div>
       <div class="slide-body">
         <span class="slide-tag">${htmlEscape(s.tag || "FEATURED")}</span>
         <h1 class="slide-title">${htmlEscape(s.title || "")}</h1>
@@ -755,9 +785,6 @@ ${footer()}`;
   return pageShell("CM FLIX — Movies & Series", body, { script });
 }
 
-/* ══════════════════════════════════════════════════
-   CATEGORY / SEARCH GRID PAGE  (paginated, 15/page)
-   ══════════════════════════════════════════════════ */
 function gridPage(title, activeCat, items, page, totalPages, total, hrefFor, query = "") {
   const cards = items.map(cardHtml).join("");
   const pager = buildPager(page, totalPages, hrefFor);
@@ -778,33 +805,36 @@ ${footer()}`;
 }
 
 /* ══════════════════════════════════════════════════
-   WATCH PAGE  (single movie OR series)  — direct link, NO proxy
+   WATCH PAGE  — signed stream URLs only (no real link in HTML)
+   `streams` is precomputed server-side:
+     - movie/adult: { video, dl }
+     - series: seasons[].episodes[] each { video, dl }
+   When user is gated, streams are empty strings → nothing leaks.
    ══════════════════════════════════════════════════ */
-function watchPage(item, user) {
+function watchPage(item, user, gated, streams) {
   const cat = CATEGORIES[item.type] || CATEGORIES.movie;
   const loggedIn = !!user;
-  const expired = loggedIn ? isExpired(user) : false;
-  const gated = !loggedIn || expired;
 
-  // Build player area
   let playerArea = "";
   let seriesNav = "";
 
   if (item.type === "series") {
     const seasons = Array.isArray(item.seasons) ? item.seasons : [];
-    // season tabs + episode lists
     const seasonTabs = seasons.map((s, si) => `
       <button class="season-tab ${si === 0 ? "on" : ""}" data-s="${si}">Season ${s.season || (si + 1)}</button>`).join("");
     const epLists = seasons.map((s, si) => {
-      const eps = (s.episodes || []).map((e, ei) => `
+      const eps = (s.episodes || []).map((e, ei) => {
+        const st = (streams.seasons?.[si]?.[ei]) || { video: "", dl: "" };
+        return `
         <button class="ep-btn" data-s="${si}" data-e="${ei}"
-          data-video="${htmlEscape(e.video_url || "")}"
-          data-dl="${htmlEscape(e.download_url || e.video_url || "")}"
+          data-video="${htmlEscape(st.video || "")}"
+          data-dl="${htmlEscape(st.dl || "")}"
           data-title="${htmlEscape(e.title || ("Episode " + (e.ep || ei + 1)))}">
           <span class="ep-no">${e.ep || ei + 1}</span>
           <span class="ep-tt">${htmlEscape(e.title || ("Episode " + (e.ep || ei + 1)))}</span>
           <span class="ep-play">▶</span>
-        </button>`).join("");
+        </button>`;
+      }).join("");
       return `<div class="ep-list ${si === 0 ? "on" : ""}" data-s="${si}">${eps || '<div class="empty">Episode မရှိသေးပါ</div>'}</div>`;
     }).join("");
 
@@ -815,17 +845,16 @@ function watchPage(item, user) {
       </div>`;
     playerArea = `
       <div class="player-box">
-        <video id="cmPlayer" controls playsinline preload="metadata" poster="${htmlEscape(item.poster || "")}"></video>
+        <video id="cmPlayer" controls controlsList="nodownload" playsinline preload="metadata" poster="${htmlEscape(item.poster || "")}"></video>
         <div class="player-empty" id="playerEmpty">▶ အပိုင်းတစ်ခုကို ရွေးပါ</div>
       </div>
       <div class="now-playing" id="nowPlaying"></div>`;
   } else {
-    const vurl = item.video_url || "";
-    const dl = item.download_url || vurl;
+    const st = streams.single || { video: "", dl: "" };
     playerArea = `
       <div class="player-box">
-        <video id="cmPlayer" controls playsinline preload="metadata" poster="${htmlEscape(item.poster || "")}"
-          data-video="${htmlEscape(vurl)}" data-dl="${htmlEscape(dl)}"></video>
+        <video id="cmPlayer" controls controlsList="nodownload" playsinline preload="metadata" poster="${htmlEscape(item.poster || "")}"
+          data-video="${htmlEscape(st.video || "")}" data-dl="${htmlEscape(st.dl || "")}"></video>
       </div>`;
   }
 
@@ -855,7 +884,6 @@ function watchPage(item, user) {
     .gate{background:#2a1420;border:1px solid #6a2030;color:#ffd;padding:12px 14px;border-radius:10px;margin:14px 0;font-size:14px;line-height:1.6}
     .gate a{color:var(--acc2);font-weight:800}
     .now-playing{margin-top:12px;color:var(--acc2);font-weight:700;font-size:14px;min-height:18px}
-    /* seasons */
     .seasons{margin-top:20px}
     .season-tabs{display:flex;gap:8px;overflow-x:auto;padding-bottom:10px;scrollbar-width:none}
     .season-tabs::-webkit-scrollbar{display:none}
@@ -883,7 +911,7 @@ ${topBar(item.type)}
       ${playerArea}
       <div class="actions">
         <button class="btn-play" id="btnPlay">▶ Play</button>
-        <a class="btn-dl" id="btnDl" href="#" download>⬇ Download</a>
+        <a class="btn-dl" id="btnDl" href="#">⬇ Download</a>
       </div>
       ${item.type !== "series" ? `
         <h1 class="meta-title">${htmlEscape(item.title)}</h1>
@@ -925,7 +953,6 @@ ${footer()}`;
     if(nowEl && title){ nowEl.textContent='▶ Now playing: '+title; }
   }
 
-  // initial source for movie/adult
   ${item.type !== "series" ? `
   (function(){
     var dv=v.getAttribute('data-video')||''; var dd=v.getAttribute('data-dl')||dv;
@@ -952,7 +979,6 @@ ${footer()}`;
     v.addEventListener('play',function(){ if(GATED){ v.pause(); gateMsg(); } });
   }
 
-  // series: season tabs + episode buttons
   ${item.type === "series" ? `
   document.querySelectorAll('.season-tab').forEach(function(tab){
     tab.addEventListener('click',function(){
@@ -1075,7 +1101,7 @@ function accountPage(user, info = "", error = "") {
 }
 
 /* ══════════════════════════════════════════════════
-   ADMIN PAGE
+   ADMIN PAGE  (now includes Slide Image field)
    ══════════════════════════════════════════════════ */
 function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], itPage = 1, itTotalPages = 1, itQuery = "", itTotal = 0, itType = "") {
   const keyRows = keys.map(k => {
@@ -1122,7 +1148,7 @@ function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], i
     return `<tr>
       <td style="width:54px"><div class="thumb" style="background-image:url('${htmlEscape(m.poster || "")}')">${m.poster ? "" : "🎬"}</div></td>
       <td><a href="/watch/${htmlEscape(m.id)}" target="_blank" style="color:#cef;text-decoration:none;font-weight:600">${htmlEscape(m.title || "Untitled")}</a>
-        <div style="font-size:10.5px;color:var(--mut)"><code>${htmlEscape(m.id)}</code></div></td>
+        <div style="font-size:10.5px;color:var(--mut)"><code>${htmlEscape(m.id)}</code>${m.slide_image ? ' · 🖼️ slide' : ''}</div></td>
       <td><span class="badge" style="background:#1c2740;color:#cde">${cat.icon} ${htmlEscape(cat.name)}</span></td>
       <td style="white-space:nowrap;font-size:11.5px">${m.created_at ? new Date(m.created_at).toLocaleDateString("en-GB", { timeZone: "Asia/Yangon" }) : "—"}</td>
       <td>
@@ -1168,7 +1194,7 @@ function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], i
 
   <!-- ════ ADD CONTENT ════ -->
   <div id="content" style="background:#15101f;border:1px solid #3a1f3f;border-radius:12px;padding:16px;margin-bottom:18px">
-    <div style="font-weight:800;color:var(--acc2);margin-bottom:10px">➕ Content အသစ် တင်ရန် (Direct link — proxy မလို)</div>
+    <div style="font-weight:800;color:var(--acc2);margin-bottom:10px">➕ Content အသစ် တင်ရန် (Signed-link stream — link မပေါက်ကြား)</div>
     <form method="POST" action="/admin/item/create" id="addForm">
       <input type="hidden" name="csrf_token" value="${htmlEscape(csrfToken)}">
       <div style="display:grid;grid-template-columns:1fr;gap:10px">
@@ -1182,7 +1208,10 @@ function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], i
           </div>
           <div><label>Title</label><input type="text" name="title" placeholder="ဥပမာ - Action 2025" required></div>
         </div>
-        <div><label>Poster URL (ပုံ Link)</label><input type="url" name="poster" placeholder="https://.../poster.jpg"></div>
+        <div><label>Poster URL (ထောင်လိုက် ပုံ — card အတွက်)</label><input type="url" name="poster" placeholder="https://.../poster.jpg"></div>
+        <div><label>Slide Banner URL (အလျားလိုက် ပုံ — slider အတွက်၊ optional)</label><input type="url" name="slide_image" placeholder="https://.../banner-wide.jpg">
+          <div style="font-size:11px;color:var(--mut);margin-top:4px">ကွက်လပ်ထားရင် slider မှာ poster ကို သုံးမယ်။ (16:9 / landscape ပုံ ထည့်ရင် အကောင်းဆုံး)</div>
+        </div>
         <div class="single-fields"><label>Video URL (direct / R2)</label><input type="url" name="video_url" placeholder="https://.../video.mp4"></div>
         <div class="single-fields"><label>Download URL (optional — ကွက်လပ်ထားရင် video URL ကို သုံးမယ်)</label><input type="url" name="download_url" placeholder="https://.../download.mp4"></div>
         <div class="series-fields" style="display:none">
@@ -1294,7 +1323,7 @@ function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], i
 }
 
 /* ══════════════════════════════════════════════════
-   ADMIN EDIT PAGE  (separate page — series JSON editing)
+   ADMIN EDIT PAGE  (with Slide Image)
    ══════════════════════════════════════════════════ */
 function adminEditPage(item, csrfToken, error = "") {
   const isSeries = item.type === "series";
@@ -1319,7 +1348,8 @@ function adminEditPage(item, csrfToken, error = "") {
       </div>
       <div><label>Title</label><input type="text" name="title" value="${htmlEscape(item.title || "")}" required></div>
     </div>
-    <label>Poster URL</label><input type="url" name="poster" value="${htmlEscape(item.poster || "")}">
+    <label>Poster URL (ထောင်လိုက် — card)</label><input type="url" name="poster" value="${htmlEscape(item.poster || "")}">
+    <label>Slide Banner URL (အလျားလိုက် — slider, optional)</label><input type="url" name="slide_image" value="${htmlEscape(item.slide_image || "")}">
     <div class="single-fields" style="display:${isSeries ? "none" : "block"}">
       <label>Video URL</label><input type="url" name="video_url" value="${htmlEscape(item.video_url || "")}">
       <label>Download URL (optional)</label><input type="url" name="download_url" value="${htmlEscape(item.download_url || "")}">
@@ -1374,6 +1404,50 @@ function sanitizeSeasons(raw) {
 }
 
 /* ══════════════════════════════════════════════════
+   Build signed streams for watchPage (server-side only)
+   ══════════════════════════════════════════════════ */
+async function buildStreams(env, item, gated, user) {
+  if (gated) {
+    // gated ဖြစ်ရင် link လုံးဝ မထုတ်ဘူး
+    if (item.type === "series") return { seasons: [] };
+    return { single: { video: "", dl: "" } };
+  }
+  const u = await userStreamTag(user);
+  if (item.type === "series") {
+    const seasons = Array.isArray(item.seasons) ? item.seasons : [];
+    const out = [];
+    for (let si = 0; si < seasons.length; si++) {
+      const eps = seasons[si].episodes || [];
+      const row = [];
+      for (let ei = 0; ei < eps.length; ei++) {
+        const video = await makeStreamUrl(env, item.id, { s: si, e: ei, download: false, u });
+        const dl = await makeStreamUrl(env, item.id, { s: si, e: ei, download: true, u });
+        row.push({ video, dl });
+      }
+      out.push(row);
+    }
+    return { seasons: out };
+  } else {
+    const video = await makeStreamUrl(env, item.id, { s: -1, e: -1, download: false, u });
+    const dl = await makeStreamUrl(env, item.id, { s: -1, e: -1, download: true, u });
+    return { single: { video, dl } };
+  }
+}
+
+// signed request → real R2 link ကို resolve
+function resolveRealUrl(item, s, e, download) {
+  if (item.type === "series") {
+    const seasons = Array.isArray(item.seasons) ? item.seasons : [];
+    const ep = seasons?.[s]?.episodes?.[e];
+    if (!ep) return "";
+    if (download) return ep.download_url || ep.video_url || "";
+    return ep.video_url || "";
+  }
+  if (download) return item.download_url || item.video_url || "";
+  return item.video_url || "";
+}
+
+/* ══════════════════════════════════════════════════
    ROUTER
    ══════════════════════════════════════════════════ */
 export async function onRequest(context) {
@@ -1392,10 +1466,11 @@ export async function onRequest(context) {
       { type: "series", items: byType("series").slice(0, HOME_PREVIEW_COUNT) },
       { type: "adult",  items: byType("adult").slice(0, HOME_PREVIEW_COUNT) },
     ];
-    // hero slides = latest items with posters (max 5), from any category
-    const slidePool = all.filter(i => i.poster).slice(0, 5);
+    // hero slides = slide_image ရှိတဲ့အရာတွေ ဦးစားပေး၊ မရှိရင် poster fallback
+    const withImg = all.filter(i => i.slide_image || i.poster);
+    const slidePool = withImg.slice(0, 6);
     const slides = slidePool.map(i => ({
-      poster: i.poster,
+      image: i.slide_image || i.poster,
       title: i.title,
       desc: (CATEGORIES[i.type] || CATEGORIES.movie).name,
       tag: (CATEGORIES[i.type] || CATEGORIES.movie).name.toUpperCase(),
@@ -1449,7 +1524,40 @@ export async function onRequest(context) {
       });
     }
     const user = await getCurrentUser(request, env);
-    return new Response(watchPage(item, user), { headers: { "content-type": "text/html; charset=utf-8" } });
+    const gated = !user || isExpired(user);
+    const streams = await buildStreams(env, item, gated, user);
+    return new Response(watchPage(item, user, gated, streams), { headers: { "content-type": "text/html; charset=utf-8" } });
+  }
+
+  // ───────────── STREAM (signed) — real link resolve + redirect ─────────────
+  if (path.startsWith("/stream/") && method === "GET") {
+    const id = decodeURIComponent(path.slice("/stream/".length).split("/")[0]);
+    const item = await getItem(env, id);
+    if (!item) return new Response("Not found", { status: 404 });
+
+    // 1) signature စစ်
+    const v = await verifyStreamSig(env, id, url.searchParams);
+    if (!v.ok) {
+      return new Response(v.reason === "expired" ? "Link expired" : "Invalid link", { status: 403 });
+    }
+    // 2) login / valid user ဖြစ်မှသာ ဖွင့်ပေး
+    const user = await getCurrentUser(request, env);
+    if (!user || isExpired(user)) {
+      return new Response("Login required", { status: 403 });
+    }
+    // 3) link ကို ထုတ်ပေးခဲ့သူနဲ့ တူမတူ (device/sid binding)
+    const u = await userStreamTag(user);
+    if (v.u && !safeEqual(v.u, u)) {
+      return new Response("Link not valid for this session", { status: 403 });
+    }
+    // 4) real R2 link resolve
+    const real = resolveRealUrl(item, v.s, v.e, v.d === 1);
+    if (!isHttpUrl(real)) return new Response("No source", { status: 404 });
+
+    // 5) redirect (302) — real link က location header ထဲ ရှိသွားပေမဲ့
+    //    user က valid + signed ဖြစ်မှသာ ဒီအဆင့်ရောက်တာမို့ leak မဖြစ်တော့ပါ။
+    const headers = { "Location": real, "Cache-Control": "private, no-store" };
+    return new Response(null, { status: 302, headers });
   }
 
   // ───────────── AUTH STATUS ─────────────
@@ -1491,7 +1599,6 @@ export async function onRequest(context) {
       if (!rawKey) {
         return new Response(keyLoginPage(csrfToken, "Key ထည့်ပါ။", "", safeNext), { headers: { "content-type": "text/html; charset=utf-8" }, status: 400 });
       }
-      // Admin login
       if (env.ADMIN_KEY && safeEqual(rawKey, normalizeKey(env.ADMIN_KEY))) {
         const deviceShort = (await deviceIdFrom(request, clientUuid)).slice(0, 12);
         const sid = randomToken(8);
@@ -1597,11 +1704,13 @@ export async function onRequest(context) {
       const type = isValidCategory(form.type) ? form.type : "movie";
       const title = String(form.title || "").trim().slice(0, 160);
       const poster = String(form.poster || "").trim().slice(0, 600);
+      const slide_image = String(form.slide_image || "").trim().slice(0, 600);
       const note = String(form.note || "").trim().slice(0, 1000);
       if (!title) return redirectInfo("Title ဖြည့်ပါ။");
       if (poster && !isHttpUrl(poster)) return redirectInfo("Poster link မှားနေပါတယ်။");
+      if (slide_image && !isHttpUrl(slide_image)) return redirectInfo("Slide banner link မှားနေပါတယ်။");
       const id = generateItemId();
-      const data = { id, type, title, poster, note, created_at: Date.now() };
+      const data = { id, type, title, poster, slide_image, note, created_at: Date.now() };
       if (type === "series") {
         const r = sanitizeSeasons(form.seasons_json || "");
         if (!r.ok) return redirectInfo(r.err);
@@ -1628,17 +1737,19 @@ export async function onRequest(context) {
       const type = isValidCategory(form.type) ? form.type : existing.type;
       const title = String(form.title || "").trim().slice(0, 160);
       const poster = String(form.poster || "").trim().slice(0, 600);
+      const slide_image = String(form.slide_image || "").trim().slice(0, 600);
       const note = String(form.note || "").trim().slice(0, 1000);
       if (!title) return new Response(adminEditPage(existing, csrfToken, "Title ဖြည့်ပါ။"), { headers: { "content-type": "text/html; charset=utf-8" } });
-      const data = { id, type, title, poster, note, created_at: existing.created_at || Date.now() };
+      if (slide_image && !isHttpUrl(slide_image)) return new Response(adminEditPage({ ...existing, type, title, poster, slide_image, note }, csrfToken, "Slide banner link မှားနေပါတယ်။"), { headers: { "content-type": "text/html; charset=utf-8" } });
+      const data = { id, type, title, poster, slide_image, note, created_at: existing.created_at || Date.now() };
       if (type === "series") {
         const r = sanitizeSeasons(form.seasons_json || "");
-        if (!r.ok) return new Response(adminEditPage({ ...existing, type, title, poster, note }, csrfToken, r.err), { headers: { "content-type": "text/html; charset=utf-8" } });
+        if (!r.ok) return new Response(adminEditPage({ ...existing, type, title, poster, slide_image, note }, csrfToken, r.err), { headers: { "content-type": "text/html; charset=utf-8" } });
         data.seasons = r.seasons;
       } else {
         const video_url = String(form.video_url || "").trim().slice(0, 1000);
         const download_url = String(form.download_url || "").trim().slice(0, 1000);
-        if (!isHttpUrl(video_url)) return new Response(adminEditPage({ ...existing, type, title, poster, note }, csrfToken, "Video URL ဖြည့်ပါ။"), { headers: { "content-type": "text/html; charset=utf-8" } });
+        if (!isHttpUrl(video_url)) return new Response(adminEditPage({ ...existing, type, title, poster, slide_image, note }, csrfToken, "Video URL ဖြည့်ပါ။"), { headers: { "content-type": "text/html; charset=utf-8" } });
         data.video_url = video_url;
         data.download_url = download_url || video_url;
       }
