@@ -845,7 +845,7 @@ function watchPage(item, user, gated, streams) {
       </div>`;
     playerArea = `
       <div class="player-box">
-        <video id="cmPlayer" controls controlsList="nodownload" playsinline preload="metadata" poster="${htmlEscape(item.poster || "")}"></video>
+        <video id="cmPlayer" controls controlsList="nodownload" playsinline preload="metadata" poster="${htmlEscape(item.slide_image || item.poster || "")}"></video>
         <div class="player-empty" id="playerEmpty">▶ အပိုင်းတစ်ခုကို ရွေးပါ</div>
       </div>
       <div class="now-playing" id="nowPlaying"></div>`;
@@ -853,7 +853,7 @@ function watchPage(item, user, gated, streams) {
     const st = streams.single || { video: "", dl: "" };
     playerArea = `
       <div class="player-box">
-        <video id="cmPlayer" controls controlsList="nodownload" playsinline preload="metadata" poster="${htmlEscape(item.poster || "")}"
+        <video id="cmPlayer" controls controlsList="nodownload" playsinline preload="metadata" poster="${htmlEscape(item.slide_image || item.poster || "")}"
           data-video="${htmlEscape(st.video || "")}" data-dl="${htmlEscape(st.dl || "")}"></video>
       </div>`;
   }
