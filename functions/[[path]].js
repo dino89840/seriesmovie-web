@@ -1501,14 +1501,18 @@ function adminEditPage(item, csrfToken, error = "") {
    AUTO-PARSE SQL LOGS & SERIES JSON SANITIZER
    ══════════════════════════════════════════════════ */
 function parseRawTextToSeasons(rawText) {
-  const urlRegex = /(https?:\/\/[^\s"'<>^|]+\.(?:mp4|mkv|m3u8|webm|mov)(?:\?[^\s"<>^|]*)?)/gi;
+  // Control characters [\x00-\x1F] များကို ချန်လှပ်၍ ဗီဒီယို link များကိုသာ တိကျစွာ ရှာဖွေမည်
+  const urlRegex = /(https?:\/\/[^\s"'<>^|`\x00-\x1F\x7F-\x9F]+\.(?:mp4|mkv|m3u8|webm|mov)(?:\?[^\s"<>^|`\x00-\x1F\x7F-\x9F]*)?)/gi;
   const matches = [...new Set(rawText.match(urlRegex) || [])];
   
   if (!matches.length) return null;
   
   const epsMap = [];
   
-  for (const url of matches) {
+  for (let url of matches) {
+    // URL ထဲတွင် binary/control characters များ ကပ်ပါလာပါက ၎င်းတို့မတိုင်ခင်အထိသာ ဖြတ်ယူသန့်စင်မည်
+    url = url.split(/[\x00-\x1F\x7F-\x9F]/)[0];
+    
     const decoded = decodeURIComponent(url);
     let seasonNum = 1;
     let epNum = null;
@@ -1579,6 +1583,7 @@ function parseRawTextToSeasons(rawText) {
       }
       return {
         season: parseInt(s, 10),
+        box: s,
         episodes: uniqueEps
       };
     })
