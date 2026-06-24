@@ -639,6 +639,13 @@ const CMFLIX_CSS = `
   .navchips a.on{background:linear-gradient(135deg,var(--acc),var(--acc2));border-color:transparent;box-shadow:0 4px 14px rgba(229,9,20,.4)}
   .navchips a:hover{filter:brightness(1.14)}
 
+  /* ဖုန်းမျက်နှာပြင်အသေးများတွင် အားလုံးတစ်တန်းတည်း ကွက်တိပေါ်စေရန် ညှိနှိုင်းခြင်း */
+  @media(max-width:640px){
+    .navchips{padding:12px 10px 4px;gap:5px;justify-content:space-between}
+    .navchips a{padding:7px 11px;font-size:12px;gap:4px}
+    .navchips a svg{width:13px !important;height:13px !important}
+  }
+
   /* Hero slider */
   .hero{position:relative;margin:16px 0 6px;border-radius:20px;overflow:hidden;border:1px solid var(--line);box-shadow:0 22px 60px rgba(0,0,0,.6)}
   .hero-track{display:flex;transition:transform .6s cubic-bezier(.45,.05,.2,1)}
