@@ -968,10 +968,10 @@ function watchPage(item, user, gated, streams) {
   flex-direction:column;
   gap:8px;
   margin-top:6px;
-  /* ဒေါင်လိုက် Scroll စနစ် ထည့်သွင်းခြင်း */
-  max-height: 380px; /* အမြင့်ဆုံး 380px ထိပဲပြပြီး ပိုပါက scroll ပေါ်မည် */
+  max-height: 420px; /* အမြင့်ကို 420px သို့ အနည်းငယ် တိုးမြှင့်ထားသည် */
   overflow-y: auto;
-  padding-right: 6px; /* scrollbar နှင့် မကပ်စေရန် */
+  padding-right: 6px;
+  padding-bottom: 20px; /* အောက်ဆုံးအပိုင်း ကပ်မနေဘဲ အပြည့်အဝ ပေါ်လာစေရန် (အဓိက ပြင်ဆင်ချက်) */
 }
 .ep-list.on{display:flex}
 
