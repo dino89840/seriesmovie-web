@@ -979,8 +979,8 @@ function watchPage(item, user, gated, streams) {
     .actions a,.actions button{flex:1 1 170px;max-width:280px;text-align:center;padding:13px 18px;border-radius:11px;border:0;cursor:pointer;font-weight:800;font-size:15px;text-decoration:none;font-family:inherit;display:inline-flex;align-items:center;justify-content:center;gap:8px;transition:.15s}
     .btn-play{background:#fff;color:#111}
     .btn-play:hover{background:var(--acc);color:#fff}
-    .btn-dl{background:linear-gradient(135deg,var(--acc),var(--acc2));color:#fff}
-    .btn-dl:hover{filter:brightness(1.1)}
+    .btn-dl{background:linear-gradient(135deg,var(--acc),var(--acc2));color:#fff; -webkit-touch-callout: none; user-select: none;}
+.btn-dl:hover{filter:brightness(1.1)}
     .gate{background:#2a1420;border:1px solid #6a2030;color:#ffd;padding:12px 14px;border-radius:11px;margin:14px 0;font-size:14px;line-height:1.6}
     .gate a{color:var(--acc2);font-weight:800}
     .now-playing{margin-top:12px;color:var(--acc2);font-weight:700;font-size:14px;min-height:18px}
@@ -1100,7 +1100,7 @@ ${footer()}`;
     if(emptyEl) emptyEl.classList.add('hide');
     if(player){ player.source={type:'video',sources:[{src:cur.video,type:'video/mp4'}]}; }
     else if(v){ v.src=cur.video; }
-    if(btnDl){ btnDl.href=cur.dl || '#'; }
+    
     if(nowEl && title){ nowEl.textContent='▶ Now playing: '+title; }
   }
 
@@ -1108,7 +1108,7 @@ ${footer()}`;
   (function(){
     var dv=v.getAttribute('data-video')||''; var dd=v.getAttribute('data-dl')||dv;
     cur.video=dv; cur.dl=dd;
-    if(btnDl) btnDl.href=dd||'#';
+    
     if(dv && player){ player.source={type:'video',sources:[{src:dv,type:'video/mp4'}]}; }
     else if(dv && v){ v.src=dv; }
   })();` : ``}
@@ -1127,9 +1127,16 @@ ${footer()}`;
     });
   }
   if(btnDl){
-    btnDl.addEventListener('click',function(e){
-      if(GATED){ e.preventDefault(); gateMsg(); return; }
-      if(!cur.dl){ e.preventDefault(); alert('Download link မရှိသေးပါ'); }
+    // Right-click နှိပ်ခြင်းကို လုံးဝတားဆီးရန်
+    btnDl.addEventListener('contextmenu', function(e){ e.preventDefault(); });
+    
+    btnDl.addEventListener('click', function(e){
+      e.preventDefault();
+      if(GATED){ gateMsg(); return; }
+      if(!cur.dl){ alert('Download link မရှိသေးပါ'); return; }
+      
+      // HTML ထဲတွင် လင့်ခ်မပြဘဲ JavaScript ဖြင့် တိုက်ရိုက်ဒေါင်းလုဒ်ဆွဲစေခြင်း
+      window.location.href = cur.dl;
     });
   }
   if(GATED && player){
