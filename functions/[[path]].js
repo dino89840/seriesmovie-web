@@ -1339,10 +1339,10 @@ function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], i
         <div class="single-fields"><label>Video URL (direct / R2)</label><input type="url" name="video_url" placeholder="https://.../video.mp4"></div>
         <div class="single-fields"><label>Download URL (optional — ကွက်လပ်ထားရင် video URL ကို သုံးမယ်)</label><input type="url" name="download_url" placeholder="https://.../download.mp4"></div>
         <div class="series-fields" style="display:none">
-          <label>Series Episodes (JSON) — Season/Episode</label>
-          <textarea name="seasons_json" placeholder='[{"season":1,"episodes":[{"ep":1,"title":"Ep 1","video_url":"https://.../s1e1.mp4","download_url":""},{"ep":2,"title":"Ep 2","video_url":"https://.../s1e2.mp4"}]},{"season":2,"episodes":[{"ep":1,"title":"S2 Ep1","video_url":"https://.../s2e1.mp4"}]}]'></textarea>
-          <div style="font-size:11px;color:var(--mut);margin-top:4px">Format: season တစ်ခုစီမှာ episodes array။ episode တစ်ခုစီမှာ ep, title, video_url, download_url(optional)။</div>
-        </div>
+  <label>Series Episodes (JSON သို့မဟုတ် SQLite Task log များ တိုက်ရိုက်ထည့်နိုင်သည်)</label>
+  <textarea name="seasons_json" placeholder="JSON Format ဖြင့်ဖြစ်စေ သို့မဟုတ် ဖုန်းထဲက ကူးယူလာသည့် SQLite Task logs/စာသားများကိုဖြစ်စေ ဤနေရာတွင် တိုက်ရိုက် Paste ချပေးနိုင်ပါသည်။"></textarea>
+  <div style="font-size:11px;color:var(--mut);margin-top:4px">Format: JSON စနစ် (သို့မဟုတ်) SQLite task log များကို တိုက်ရိုက်ထည့်သွင်းပါက စနစ်မှ အလိုအလျောက် အပိုင်းများကို ခွဲထုတ်ပေးပါမည်။</div>
+</div>
         <div><label>Note / ဖော်ပြချက် (optional)</label><textarea name="note" placeholder="ဇာတ်လမ်းအကျဉ်း…" style="min-height:80px"></textarea></div>
       </div>
       <button type="submit" class="btn" style="margin-top:14px">တင်မယ်</button>
@@ -1498,33 +1498,132 @@ function adminEditPage(item, csrfToken, error = "") {
 }
 
 /* ══════════════════════════════════════════════════
-   SERIES JSON SANITIZER
+   AUTO-PARSE SQL LOGS & SERIES JSON SANITIZER
    ══════════════════════════════════════════════════ */
-function sanitizeSeasons(raw) {
-  let arr;
-  try { arr = JSON.parse(raw); } catch (_) { return { ok: false, err: "Episodes JSON format မှားနေပါတယ်။" }; }
-  if (!Array.isArray(arr)) return { ok: false, err: "JSON က array ဖြစ်ရပါမယ်။" };
-  const out = [];
-  for (const s of arr) {
-    if (!s || typeof s !== "object") continue;
-    const season = parseInt(s.season || out.length + 1, 10) || (out.length + 1);
-    const eps = Array.isArray(s.episodes) ? s.episodes : [];
-    const cleanEps = [];
-    for (const e of eps) {
-      if (!e || typeof e !== "object") continue;
-      const video_url = String(e.video_url || "").trim().slice(0, 1000);
-      if (!isHttpUrl(video_url)) continue;
-      cleanEps.push({
-        ep: parseInt(e.ep || cleanEps.length + 1, 10) || (cleanEps.length + 1),
-        title: String(e.title || "").trim().slice(0, 160),
-        video_url,
-        download_url: isHttpUrl(e.download_url) ? String(e.download_url).trim().slice(0, 1000) : "",
-      });
+function parseRawTextToSeasons(rawText) {
+  const urlRegex = /(https?:\/\/[^\s"'<>^|]+\.(?:mp4|mkv|m3u8|webm|mov)(?:\?[^\s"<>^|]*)?)/gi;
+  const matches = [...new Set(rawText.match(urlRegex) || [])];
+  
+  if (!matches.length) return null;
+  
+  const epsMap = [];
+  
+  for (const url of matches) {
+    const decoded = decodeURIComponent(url);
+    let seasonNum = 1;
+    let epNum = null;
+    
+    // Pattern 1: S01E02 / S1E2 / s1e01
+    const s1e1 = decoded.match(/[sS](\d+)[eE](\d+)/);
+    if (s1e1) {
+      seasonNum = parseInt(s1e1[1], 10);
+      epNum = parseInt(s1e1[2], 10);
+    } else {
+      // Pattern 2: E02, E2, E10 (not part of another word like "HEVC")
+      const eOnly = decoded.match(/(?:[^a-zA-Z0-9]|^)[eE](\d+)(?:[^a-zA-Z0-9]|$)/);
+      if (eOnly) {
+        epNum = parseInt(eOnly[1], 10);
+      } else {
+        // Pattern 3: Ep1, Ep-01, Ep 01, Episode 1
+        const epWord = decoded.match(/(?:ep|episode)[-_\s]?(\d+)/i);
+        if (epWord) {
+          epNum = parseInt(epWord[1], 10);
+        } else {
+          // Pattern 4: any isolated number before .mp4
+          const baseName = decoded.split('/').pop() || "";
+          const numOnly = baseName.match(/(?:^|[^0-9])(\d+)(?:\.mp4|\.mkv|\.avi|$)/i);
+          if (numOnly) {
+            epNum = parseInt(numOnly[1], 10);
+          }
+        }
+      }
     }
-    out.push({ season, episodes: cleanEps });
+    
+    epsMap.push({
+      season: seasonNum,
+      ep: epNum,
+      video_url: url
+    });
   }
-  if (!out.length) return { ok: false, err: "Episode အနည်းဆုံး တစ်ခု ထည့်ပါ။" };
-  return { ok: true, seasons: out };
+  
+  let fallbackEp = 1;
+  epsMap.forEach(item => {
+    if (item.ep === null) {
+      item.ep = fallbackEp++;
+    }
+  });
+  
+  const seasonsGrouped = {};
+  for (const item of epsMap) {
+    if (!seasonsGrouped[item.season]) {
+      seasonsGrouped[item.season] = [];
+    }
+    seasonsGrouped[item.season].push({
+      ep: item.ep,
+      title: `Episode ${item.ep}`,
+      video_url: item.video_url,
+      download_url: ""
+    });
+  }
+  
+  const finalSeasons = Object.keys(seasonsGrouped)
+    .map(s => {
+      const sortedEps = seasonsGrouped[s].sort((a, b) => a.ep - b.ep);
+      const uniqueEps = [];
+      const seen = new Set();
+      for (const e of sortedEps) {
+        if (!seen.has(e.ep)) {
+          seen.add(e.ep);
+          uniqueEps.push(e);
+        }
+      }
+      return {
+        season: parseInt(s, 10),
+        episodes: uniqueEps
+      };
+    })
+    .sort((a, b) => a.season - b.season);
+    
+  return finalSeasons;
+}
+
+function sanitizeSeasons(raw) {
+  const trimmed = String(raw || "").trim();
+  
+  if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
+    try {
+      const arr = JSON.parse(trimmed);
+      if (Array.isArray(arr)) {
+        const out = [];
+        for (const s of arr) {
+          if (!s || typeof s !== "object") continue;
+          const season = parseInt(s.season || out.length + 1, 10) || (out.length + 1);
+          const eps = Array.isArray(s.episodes) ? s.episodes : [];
+          const cleanEps = [];
+          for (const e of eps) {
+            if (!e || typeof e !== "object") continue;
+            const video_url = String(e.video_url || "").trim().slice(0, 1000);
+            if (!isHttpUrl(video_url)) continue;
+            cleanEps.push({
+              ep: parseInt(e.ep || cleanEps.length + 1, 10) || (cleanEps.length + 1),
+              title: String(e.title || "").trim().slice(0, 160),
+              video_url,
+              download_url: isHttpUrl(e.download_url) ? String(e.download_url).trim().slice(0, 1000) : "",
+            });
+          }
+          out.push({ season, episodes: cleanEps });
+        }
+        if (out.length) return { ok: true, seasons: out };
+      }
+    } catch (_) {}
+  }
+  
+  const autoParsed = parseRawTextToSeasons(trimmed);
+  if (autoParsed && autoParsed.length > 0) {
+    return { ok: true, seasons: autoParsed };
+  }
+  
+  return { ok: false, err: "ထည့်သွင်းလိုက်သော စာသားထဲတွင် အပိုင်း ဗီဒီယို Link များ ရှာမတွေ့ပါ။" };
 }
 
 /* ══════════════════════════════════════════════════
