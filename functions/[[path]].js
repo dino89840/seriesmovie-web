@@ -1036,7 +1036,7 @@ ${topBar(item.type)}
       ${playerArea}
       <div class="actions">
         <button class="btn-play" id="btnPlay">▶ Play</button>
-        <a class="btn-dl" id="btnDl" href="#">⬇ Download</a>
+        <button class="btn-dl" id="btnDl">⬇ Download</button>
       </div>
       ${item.type !== "series" ? `
         <h1 class="meta-title">${htmlEscape(item.title)}</h1>
