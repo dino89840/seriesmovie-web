@@ -888,7 +888,7 @@ ${topBar(activeCat, query)}
   <div class="section">
     <div class="section-head">
       <h2 style="display:flex;align-items:center;gap:8px">${getSvgIcon(activeCat, 22)} ${htmlEscape(title)}</h2>
-      <span style="color:var(--mut);font-size:13px">${total} ခု</span>
+      <span style="color:var(--mut);font-size:13px">${total} Total</span>
     </div>
     <div class="grid">${cards || `<div class="empty">${query ? "ရှာဖွေမှု မတွေ့ပါ" : "ဘာမှ မရှိသေးပါ"}</div>`}</div>
     ${pager}
