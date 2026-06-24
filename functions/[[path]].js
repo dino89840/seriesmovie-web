@@ -1070,7 +1070,19 @@ ${footer()}`;
       tooltips:{controls:true,seek:true}
     });
   }catch(_){}
-
+// Fullscreen ဝင်သည့်အခါ ဖုန်းကို ဘေးတိုက် (Landscape) အလိုအလျောက် လှည့်ရန်
+  if (player) {
+    player.on('enterfullscreen', function() {
+      if (screen.orientation && screen.orientation.lock) {
+        screen.orientation.lock('landscape').catch(function() {});
+      }
+    });
+    player.on('exitfullscreen', function() {
+      if (screen.orientation && screen.orientation.unlock) {
+        screen.orientation.unlock();
+      }
+    });
+  }
   function gateMsg(){
     var loginUrl='/login?next='+encodeURIComponent(location.pathname+location.search);
     location.href = ${loggedIn ? "'/account'" : "loginUrl"};
