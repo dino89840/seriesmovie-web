@@ -1520,7 +1520,6 @@ function adminEditPage(item, csrfToken, error = "") {
    AUTO-PARSE SQL LOGS & SERIES JSON SANITIZER
    ══════════════════════════════════════════════════ */
 function parseRawTextToSeasons(rawText) {
-  // Control characters [\x00-\x1F] များကို ချန်လှပ်၍ ဗီဒီယို link များကိုသာ တိကျစွာ ရှာဖွေမည်
   const urlRegex = /(https?:\/\/[^\s"'<>^|`\x00-\x1F\x7F-\x9F]+\.(?:mp4|mkv|m3u8|webm|mov)(?:\?[^\s"<>^|`\x00-\x1F\x7F-\x9F]*)?)/gi;
   const matches = [...new Set(rawText.match(urlRegex) || [])];
   
@@ -1529,26 +1528,24 @@ function parseRawTextToSeasons(rawText) {
   const epsMap = [];
   
   for (let url of matches) {
-    // URL ထဲတွင် binary/control characters များ ကပ်ပါလာပါက ၎င်းတို့မတိုင်ခင်အထိသာ ဖြတ်ယူသန့်စင်မည်
     url = url.split(/[\x00-\x1F\x7F-\x9F]/)[0];
-    
     const decoded = decodeURIComponent(url);
     let seasonNum = 1;
     let epNum = null;
     
-    // Pattern 1: S01E02 / S1E2 / s1e01
-    const s1e1 = decoded.match(/[sS](\d+)[eE](\d+)/);
+    // Pattern 1: S01E02 / S1E2 / s1e01 / S01EP02
+    const s1e1 = decoded.match(/[sS](\d+)[eE][pP]?(\d+)/);
     if (s1e1) {
       seasonNum = parseInt(s1e1[1], 10);
       epNum = parseInt(s1e1[2], 10);
     } else {
-      // Pattern 2: E02, E2, E10 (not part of another word like "HEVC")
+      // Pattern 2: E02, E2, E10 (not part of another word)
       const eOnly = decoded.match(/(?:[^a-zA-Z0-9]|^)[eE](\d+)(?:[^a-zA-Z0-9]|$)/);
       if (eOnly) {
         epNum = parseInt(eOnly[1], 10);
       } else {
-        // Pattern 3: Ep1, Ep-01, Ep 01, Episode 1
-        const epWord = decoded.match(/(?:ep|episode)[-_\s]?(\d+)/i);
+        // Pattern 3: Ep1, Ep-01, Episode 1 (ရှေ့တွင် စာလုံးမရှိရပါ။ 'step' ကဲ့သို့သော စာလုံးများကို တားဆီးရန်)
+        const epWord = decoded.match(/(?:[^a-zA-Z0-9]|^)(?:ep|episode)[-_\s]?(\d+)/i);
         if (epWord) {
           epNum = parseInt(epWord[1], 10);
         } else {
@@ -1560,6 +1557,11 @@ function parseRawTextToSeasons(rawText) {
           }
         }
       }
+    }
+    
+    // Safety Guard: ရက်စွဲများ သို့မဟုတ် ID နံပါတ်စဉ်အရှည်ကြီးများ မှားယွင်းမဝင်စေရန် (အပိုင်းနံပါတ်သည် ၁၀၀၀ ကျော်ပါက ပယ်ဖျက်မည်)
+    if (epNum !== null && epNum > 1000) {
+      epNum = null;
     }
     
     epsMap.push({
@@ -1602,7 +1604,6 @@ function parseRawTextToSeasons(rawText) {
       }
       return {
         season: parseInt(s, 10),
-        box: s,
         episodes: uniqueEps
       };
     })
