@@ -31,9 +31,9 @@ const ADMIN_ITEMS_PER_PAGE = 20;
 
 // ── Categories (fixed) ──
 const CATEGORIES = {
-  movie:  { id: "movie",  name: "Movies",  icon: "🎬" },
-  series: { id: "series", name: "Series",  icon: "📺" },
-  adult:  { id: "adult",  name: "21+",     icon: "🔞" },
+  movie:  { id: "movie",  name: "Movies",  icon: "" },
+  series: { id: "series", name: "Series",  icon: "" },
+  adult:  { id: "adult",  name: "21+",     icon: "" },
 };
 function isValidCategory(c) { return c === "movie" || c === "series" || c === "adult"; }
 
