@@ -481,7 +481,26 @@ async function rateLimitHit(env, key, max, windowSec) {
   ).bind(key, count, reset).run();
   return { blocked: count > max, count, reset };
 }
-
+/* ══════════════════════════════════════════════════
+   PREMIUM SVG ICONS HELPER
+   ══════════════════════════════════════════════════ */
+function getSvgIcon(type, size = 16) {
+  const style = `width:${size}px;height:${size}px;display:inline-block;vertical-align:middle;stroke-width:2.2;fill:none;stroke:currentColor;`;
+  
+  if (type === "home") {
+    return `<svg style="${style}" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>`;
+  }
+  if (type === "movie") {
+    return `<svg style="${style}" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 3v18M17 3v18M3 7.5h4M3 12h18M3 16.5h4M17 7.5h4M17 16.5h4"/></svg>`;
+  }
+  if (type === "series") {
+    return `<svg style="${style}" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="15" x="2" y="7" rx="2" ry="2"/><path d="m17 2-5 5-5-5"/></svg>`;
+  }
+  if (type === "adult") {
+    return `<svg style="${style}" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16h.01"/><path d="M12 8v5"/></svg>`;
+  }
+  return "";
+}
 /* ══════════════════════════════════════════════════
    CSRF
    ══════════════════════════════════════════════════ */
@@ -750,10 +769,10 @@ function topBar(activeCat = "", query = "") {
 </div>
 <div class="wrap">
   <nav class="navchips">
-    <a class="${activeCat === "" ? "on" : ""}" href="/">🏠 Home</a>
-    <a class="${activeCat === "movie" ? "on" : ""}" href="/category/movie">🎬 Movies</a>
-    <a class="${activeCat === "series" ? "on" : ""}" href="/category/series">📺 Series</a>
-    <a class="${activeCat === "adult" ? "on" : ""}" href="/category/adult">🔞 21+</a>
+    <a class="${activeCat === "" ? "on" : ""}" href="/">${getSvgIcon("home")} Home</a>
+    <a class="${activeCat === "movie" ? "on" : ""}" href="/category/movie">${getSvgIcon("movie")} Movies</a>
+    <a class="${activeCat === "series" ? "on" : ""}" href="/category/series">${getSvgIcon("series")} Series</a>
+    <a class="${activeCat === "adult" ? "on" : ""}" href="/category/adult">${getSvgIcon("adult")} 21+</a>
   </nav>
 </div>`;
 }
@@ -825,7 +844,7 @@ function homePage(slides, sections) {
     return `
     <div class="section">
       <div class="section-head">
-        <h2>${cat.icon} ${htmlEscape(cat.name)}</h2>
+        <h2 style="display:flex;align-items:center;gap:8px">${getSvgIcon(sec.type, 20)} ${htmlEscape(cat.name)}</h2>
         <a class="seeall" href="/category/${cat.id}">See all →</a>
       </div>
       <div class="grid">${cards || `<div class="empty">${cat.name} မရှိသေးပါ</div>`}</div>
@@ -868,7 +887,7 @@ ${topBar(activeCat, query)}
 <div class="wrap">
   <div class="section">
     <div class="section-head">
-      <h2>${htmlEscape(title)}</h2>
+      <h2 style="display:flex;align-items:center;gap:8px">${getSvgIcon(activeCat, 22)} ${htmlEscape(title)}</h2>
       <span style="color:var(--mut);font-size:13px">${total} ခု</span>
     </div>
     <div class="grid">${cards || `<div class="empty">${query ? "ရှာဖွေမှု မတွေ့ပါ" : "ဘာမှ မရှိသေးပါ"}</div>`}</div>
@@ -1014,7 +1033,7 @@ ${topBar(item.type)}
       </div>
       ${item.type !== "series" ? `
         <h1 class="meta-title">${htmlEscape(item.title)}</h1>
-        <span class="meta-cat">${cat.icon} ${htmlEscape(cat.name)}</span>
+        <span class="meta-cat" style="display:inline-flex;align-items:center;gap:6px">${getSvgIcon(item.type, 13)} ${htmlEscape(cat.name)}</span>
         ${item.note ? `<p class="meta-note">${htmlEscape(item.note)}</p>` : ""}
       ` : ""}
       ${seriesNav}
@@ -1022,7 +1041,7 @@ ${topBar(item.type)}
     ${hasInfo && item.type === "series" ? `
       <div class="info-side">
         <h1 class="meta-title">${htmlEscape(item.title)}</h1>
-        <span class="meta-cat">${cat.icon} ${htmlEscape(cat.name)}</span>
+        <span class="meta-cat" style="display:inline-flex;align-items:center;gap:6px">${getSvgIcon(item.type, 13)} ${htmlEscape(cat.name)}</span>
         ${item.note ? `<p class="meta-note">${htmlEscape(item.note)}</p>` : ""}
       </div>` : ""}
   </div>
