@@ -1859,14 +1859,25 @@ export async function onRequest(context) {
     outHeaders.set("X-Content-Type-Options", "nosniff");
 
     if (v.d === 1) {
-      const safeName = (item.title || "video")
-        .replace(/[^\w\-. ]+/g, "_").slice(0, 80).trim() || "video";
-      const ext = real.split("?")[0].split(".").pop();
-      const fname = /^[a-z0-9]{2,5}$/i.test(ext) ? `${safeName}.${ext}` : `${safeName}.mp4`;
-      outHeaders.set("Content-Disposition", `attachment; filename="${fname}"`);
-    } else {
-      outHeaders.set("Content-Disposition", "inline");
-    }
+        let downloadName = item.title || "video";
+        
+        // အကယ်၍ စီးရီးဖြစ်ပါက Season နှင့် Episode အမည်ကို ဖိုင်အမည်တွင် အလိုအလျောက် ပေါင်းစပ်မည်
+        if (item.type === "series" && v.s !== -1 && v.e !== -1) {
+          const seasonNo = item.seasons?.[v.s]?.season || (v.s + 1);
+          const epNo = item.seasons?.[v.s]?.episodes?.[v.e]?.ep || (v.e + 1);
+          const sStr = String(seasonNo).padStart(2, "0");
+          const eStr = String(epNo).padStart(2, "0");
+          downloadName = `${downloadName} S${sStr}E${eStr}`;
+        }
+        
+        const safeName = downloadName
+          .replace(/[^\w\-. ]+/g, "_").slice(0, 80).trim() || "video";
+        const ext = real.split("?")[0].split(".").pop();
+        const fname = /^[a-z0-9]{2,5}$/i.test(ext) ? `${safeName}.${ext}` : `${safeName}.mp4`;
+        outHeaders.set("Content-Disposition", `attachment; filename="${fname}"`);
+      } else {
+        outHeaders.set("Content-Disposition", "inline");
+      }
 
     return new Response(originResp.body, { status: originResp.status, headers: outHeaders });
   }
