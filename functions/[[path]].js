@@ -7,6 +7,8 @@
 //  • Categories: Movies / Series / 21+  (Series: Season → Episode)
 //  • Slider supports separate landscape banner image (slide_image)
 //  • Modern Plyr player + polished UI / logo
+//  • My Key chip shows premium days-left (P=NDay) when logged in
+//  • TMDB API integration (auto-fetch poster/backdrop/overview)
 // ════════════════════════════════════════════════════════════════
 
 // ── Session / key constants ──
@@ -28,6 +30,11 @@ const KEY_LOGIN_WINDOW_SEC   = 600;
 const HOME_PREVIEW_COUNT   = 7;
 const ITEMS_PER_PAGE       = 15;
 const ADMIN_ITEMS_PER_PAGE = 20;
+
+// ── TMDB ──
+const TMDB_IMG_BASE   = "https://image.tmdb.org/t/p";
+const TMDB_POSTER_SIZE   = "w500";   // ထောင်လိုက် poster
+const TMDB_BACKDROP_SIZE = "w1280";  // အလျားလိုက် slide banner
 
 // ── Categories (fixed) ──
 const CATEGORIES = {
@@ -253,6 +260,50 @@ async function verifyStreamSig(env, itemId, params) {
 }
 
 /* ══════════════════════════════════════════════════
+   TMDB HELPERS  (optional — needs env.TMDB_API_KEY)
+   • v3 API key (32-char) သို့မဟုတ် v4 Bearer token နှစ်မျိုးလုံး support
+   • Title နဲ့ ရှာ → poster_path / backdrop_path / overview ပြန်ပေး
+   ══════════════════════════════════════════════════ */
+function tmdbConfigured(env) {
+  return !!(env.TMDB_API_KEY && String(env.TMDB_API_KEY).trim());
+}
+
+function tmdbImgUrl(path, size) {
+  if (!path) return "";
+  return `${TMDB_IMG_BASE}/${size}${path}`;
+}
+
+async function tmdbSearch(env, title, type) {
+  if (!tmdbConfigured(env) || !title) return null;
+  const key = String(env.TMDB_API_KEY).trim();
+  const isBearer = key.length > 40 || key.startsWith("ey"); // v4 token (JWT-ish)
+  const kind = type === "series" ? "tv" : "movie";
+  const qs = new URLSearchParams();
+  qs.set("query", title);
+  qs.set("include_adult", "true");
+  qs.set("language", "en-US");
+  qs.set("page", "1");
+  if (!isBearer) qs.set("api_key", key);
+  const apiUrl = `https://api.themoviedb.org/3/search/${kind}?${qs.toString()}`;
+  const headers = { "accept": "application/json" };
+  if (isBearer) headers["Authorization"] = `Bearer ${key}`;
+  try {
+    const resp = await fetch(apiUrl, { headers });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    const first = (data.results || [])[0];
+    if (!first) return null;
+    return {
+      poster: tmdbImgUrl(first.poster_path, TMDB_POSTER_SIZE),
+      backdrop: tmdbImgUrl(first.backdrop_path, TMDB_BACKDROP_SIZE),
+      overview: String(first.overview || "").slice(0, 1500),
+      tmdb_title: first.title || first.name || "",
+      year: (first.release_date || first.first_air_date || "").slice(0, 4),
+    };
+  } catch (_) { return null; }
+}
+
+/* ══════════════════════════════════════════════════
    KEY STORAGE  (D1: table `keys`)
    row: { key_id, role, created_at, expires_at, duration_label, note, disabled(0/1), devices(JSON) }
    ══════════════════════════════════════════════════ */
@@ -468,6 +519,20 @@ function htmlEscape(s) {
     .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
+/* ══════════════════════════════════════════════════
+   MY KEY LABEL — Premium ရက်ကျန် တွက်ပြီး P=NDay format
+   ══════════════════════════════════════════════════ */
+function premiumLabel(user) {
+  // login မဝင် → "My Key"
+  if (!user) return { text: "My Key", premium: false };
+  if (user.isAdmin) return { text: "Admin", premium: true };
+  const remainMs = (user.expires_at || 0) - Date.now();
+  if (remainMs <= 0) return { text: "Expired", premium: false };
+  // 1 ရက်အောက်ဆို အနည်းဆုံး 1 ရက်ပြ (ဥပမာ နာရီပိုင်းကျန်ရင်လည်း P=1Day)
+  const days = Math.max(1, Math.ceil(remainMs / 86400000));
+  return { text: `P=${days}Day`, premium: true };
+}
+
 /* Rate limit (D1: table `rate_limits`) */
 async function rateLimitHit(env, key, max, windowSec) {
   const now = Math.floor(Date.now() / 1000);
@@ -629,6 +694,7 @@ const CMFLIX_CSS = `
   .topbar .acts{display:flex;align-items:center;gap:8px;white-space:nowrap}
   .topbar .acts a{font-size:13px;text-decoration:none;color:var(--mut);font-weight:600;padding:7px 12px;border-radius:9px;transition:.15s}
   .topbar .acts a.me{background:linear-gradient(135deg,var(--acc),var(--acc2));color:#fff;box-shadow:0 4px 12px rgba(229,9,20,.35)}
+  .topbar .acts a.me.premium{background:linear-gradient(135deg,#0f9d58,#22c55e);box-shadow:0 4px 12px rgba(34,197,94,.4)}
   .topbar .acts a:hover{color:#fff}
   @media(max-width:640px){.brand .wordmark .t1{font-size:17px}.topbar .acts a:not(.me){display:none}}
 
@@ -681,8 +747,9 @@ const CMFLIX_CSS = `
   .card-item{display:block;text-decoration:none;border-radius:13px;overflow:hidden;background:var(--card);
     border:1px solid var(--line);transition:transform .18s,border-color .18s,box-shadow .18s;position:relative}
   .card-item:hover{transform:translateY(-5px);border-color:var(--acc2);box-shadow:0 14px 32px rgba(0,0,0,.55)}
-  .poster{width:100%;aspect-ratio:2/3;background-size:cover;background-position:center;background-color:#0a1120;
-    display:flex;align-items:center;justify-content:center;position:relative}
+  /* ── Poster ratio: Netflix/IMDb style 2:3 ── fixed, no stretch ── */
+  .poster{width:100%;aspect-ratio:2/3;background-size:cover;background-position:center center;background-repeat:no-repeat;background-color:#0a1120;
+    display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden}
   .poster .noimg{font-size:34px;opacity:.3}
   .poster .play-ov{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;opacity:0;transition:.2s;background:linear-gradient(0deg,rgba(0,0,0,.55),rgba(0,0,0,.15))}
   .card-item:hover .play-ov{opacity:1}
@@ -749,6 +816,7 @@ const AUTH_CSS = `
   .btn{width:100%;margin-top:18px;padding:13px;border:0;border-radius:11px;background:linear-gradient(135deg,var(--acc),var(--acc2));color:#fff;font-weight:800;font-size:15px;cursor:pointer;font-family:inherit;transition:filter .12s,transform .12s}
   .btn:hover{filter:brightness(1.08);transform:translateY(-1px)}
   .btn:disabled{opacity:.6;cursor:not-allowed}
+  .btn-sec{background:#1a2540;border:1px solid var(--line)}
   .err{background:#3a1020;border:1px solid #6a2030;color:#ffd;padding:10px 12px;border-radius:9px;margin-bottom:12px;font-size:13px;line-height:1.5}
   .ok{background:#10331a;border:1px solid #225a30;color:#cfc;padding:10px 12px;border-radius:9px;margin-bottom:12px;font-size:13px;line-height:1.5}
   .info{background:#102a3a;border:1px solid #1f4a6a;color:#cef;padding:10px 12px;border-radius:9px;margin-bottom:12px;font-size:13px;line-height:1.5}
@@ -760,7 +828,8 @@ const AUTH_CSS = `
   @keyframes spin{to{transform:rotate(360deg)}}
 `;
 
-function topBar(activeCat = "", query = "") {
+function topBar(activeCat = "", query = "", user = null) {
+  const lbl = premiumLabel(user);
   return `
 <div class="topbar">
   ${brandLogo()}
@@ -771,7 +840,7 @@ function topBar(activeCat = "", query = "") {
   <div class="acts">
     <a href="/category/movie">Movies</a>
     <a href="/category/series">Series</a>
-    <a class="me" href="/account">My Key</a>
+    <a class="me${lbl.premium ? " premium" : ""}" href="/account">${htmlEscape(lbl.text)}</a>
   </div>
 </div>
 <div class="wrap">
@@ -823,7 +892,7 @@ function buildPager(page, totalPages, hrefFor) {
 /* ══════════════════════════════════════════════════
    HOME PAGE
    ══════════════════════════════════════════════════ */
-function homePage(slides, sections) {
+function homePage(slides, sections, user) {
   const slideEls = slides.map((s) => `
     <div class="slide">
       <div class="slide-bg" style="background-image:url('${htmlEscape(s.image || "")}')"></div>
@@ -859,7 +928,7 @@ function homePage(slides, sections) {
   }).join("");
 
   const body = `
-${topBar("")}
+${topBar("", "", user)}
 <div class="wrap">
   ${heroHtml}
   ${sectionsHtml}
@@ -886,11 +955,11 @@ ${footer()}`;
   return pageShell("CM FLIX — Movies & Series", body, { script });
 }
 
-function gridPage(title, activeCat, items, page, totalPages, total, hrefFor, query = "") {
+function gridPage(title, activeCat, items, page, totalPages, total, hrefFor, query = "", user = null) {
   const cards = items.map(cardHtml).join("");
   const pager = buildPager(page, totalPages, hrefFor);
   const body = `
-${topBar(activeCat, query)}
+${topBar(activeCat, query, user)}
 <div class="wrap">
   <div class="section">
     <div class="section-head">
@@ -994,14 +1063,12 @@ function watchPage(item, user, gated, streams) {
   flex-direction:column;
   gap:8px;
   margin-top:6px;
-  max-height: 420px; /* အမြင့်ကို 420px သို့ အနည်းငယ် တိုးမြှင့်ထားသည် */
+  max-height: 420px;
   overflow-y: auto;
   padding-right: 6px;
-  padding-bottom: 20px; /* အောက်ဆုံးအပိုင်း ကပ်မနေဘဲ အပြည့်အဝ ပေါ်လာစေရန် (အဓိက ပြင်ဆင်ချက်) */
+  padding-bottom: 20px;
 }
 .ep-list.on{display:flex}
-
-/* Scrollbar ပုံစံကို ပိုမိုလှပအောင် သတ်မှတ်ခြင်း (စိတ်ကြိုက်) */
 .ep-list::-webkit-scrollbar {
   width: 5px;
 }
@@ -1028,7 +1095,7 @@ function watchPage(item, user, gated, streams) {
 
   const hasInfo = !!(item.note || item.type === "series");
   const body = `
-${topBar(item.type)}
+${topBar(item.type, "", user)}
 <div class="wrap">
   ${gateBanner}
   <div class="watch ${hasInfo ? "has-info" : ""}">
@@ -1065,7 +1132,6 @@ ${footer()}`;
   var nowEl=document.getElementById('nowPlaying');
   var cur={video:'',dl:'',title:''};
 
-  // Plyr init (modern player)
   var player=null;
   try{
     player=new Plyr(v,{
@@ -1077,7 +1143,6 @@ ${footer()}`;
       tooltips:{controls:true,seek:true}
     });
   }catch(_){}
-// Fullscreen ဝင်သည့်အခါ ဖုန်းကို ဘေးတိုက် (Landscape) အလိုအလျောက် လှည့်ရန်
   if (player) {
     player.on('enterfullscreen', function() {
       if (screen.orientation && screen.orientation.lock) {
@@ -1127,15 +1192,12 @@ ${footer()}`;
     });
   }
   if(btnDl){
-    // Right-click နှိပ်ခြင်းကို လုံးဝတားဆီးရန်
     btnDl.addEventListener('contextmenu', function(e){ e.preventDefault(); });
     
     btnDl.addEventListener('click', function(e){
       e.preventDefault();
       if(GATED){ gateMsg(); return; }
       if(!cur.dl){ alert('Download link မရှိသေးပါ'); return; }
-      
-      // HTML ထဲတွင် လင့်ခ်မပြဘဲ JavaScript ဖြင့် တိုက်ရိုက်ဒေါင်းလုဒ်ဆွဲစေခြင်း
       window.location.href = cur.dl;
     });
   }
@@ -1223,6 +1285,7 @@ function accountPage(user, info = "", error = "") {
   const remainText = remainMs > 0
     ? `${Math.floor(remainMs / 86400000)} ရက် ${Math.floor((remainMs % 86400000) / 3600000)} နာရီ ${Math.floor((remainMs % 3600000) / 60000)} မိနစ်`
     : "ကုန်ဆုံးပြီ";
+  const daysLeft = remainMs > 0 ? Math.max(1, Math.ceil(remainMs / 86400000)) : 0;
   const roleBadge = user.role === "paid"
     ? '<span class="badge badge-paid">PAID</span>'
     : '<span class="badge badge-trial">TRIAL</span>';
@@ -1245,7 +1308,7 @@ function accountPage(user, info = "", error = "") {
   ${error ? `<div class="err">${htmlEscape(error)}</div>` : ""}
   <div class="info" style="display:flex;justify-content:space-between;align-items:center">
     <div>
-      <div style="font-size:11.5px;color:var(--mut)">သက်တမ်း ကျန်ရှိ</div>
+      <div style="font-size:11.5px;color:var(--mut)">Premium ရက်ကျန် <span style="color:var(--ok);font-weight:800">P=${daysLeft}Day</span></div>
       <div style="font-size:18px;font-weight:700;color:var(--acc2)">${htmlEscape(remainText)}</div>
       <div style="font-size:11px;color:var(--mut);margin-top:2px">ကုန်ဆုံးမည့်ရက်: ${htmlEscape(exp)} (MMT)</div>
     </div>
@@ -1269,7 +1332,7 @@ function accountPage(user, info = "", error = "") {
 /* ══════════════════════════════════════════════════
    ADMIN PAGE
    ══════════════════════════════════════════════════ */
-function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], itPage = 1, itTotalPages = 1, itQuery = "", itTotal = 0, itType = "") {
+function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], itPage = 1, itTotalPages = 1, itQuery = "", itTotal = 0, itType = "", tmdbOn = false) {
   const keyRows = keys.map(k => {
     const exp = k.expires_at ? new Date(k.expires_at).toLocaleString("en-GB", { hour12: false, timeZone: "Asia/Yangon" }) : "—";
     const active = (k.expires_at && Date.now() < k.expires_at && !k.disabled);
@@ -1336,6 +1399,17 @@ function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], i
   };
   const itemPager = buildPager(itPage, itTotalPages, itHref);
 
+  const tmdbBox = tmdbOn ? `
+    <div style="background:#0e2030;border:1px solid #1f4a6a;border-radius:11px;padding:12px;margin-bottom:14px">
+      <div style="font-weight:800;color:#7fd3ff;margin-bottom:8px">🎞️ TMDB Auto-Fill (Title ထည့်ပြီး နှိပ်ပါ)</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <input type="text" id="tmdbQ" placeholder="Movie / Series Title…" style="flex:1;min-width:160px">
+        <button type="button" class="btn-ext" id="tmdbBtn" style="padding:9px 16px">Auto-fill</button>
+      </div>
+      <div id="tmdbMsg" style="font-size:11.5px;color:var(--mut);margin-top:6px"></div>
+    </div>` : `
+    <div style="font-size:11px;color:var(--mut);margin-bottom:10px">💡 TMDB auto-fill သုံးချင်ရင် <code>TMDB_API_KEY</code> environment variable ထည့်ပါ။</div>`;
+
   const body = `
 <div class="auth-wrap" style="align-items:flex-start;padding-top:24px"><div class="auth-card" style="max-width:1120px">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
@@ -1364,6 +1438,7 @@ function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], i
   <!-- ════ ADD CONTENT ════ -->
   <div id="content" style="background:#15101f;border:1px solid #3a1f3f;border-radius:13px;padding:16px;margin-bottom:18px">
     <div style="font-weight:800;color:var(--acc2);margin-bottom:10px">➕ Content အသစ် တင်ရန် (Signed-link stream — link မပေါက်ကြား)</div>
+    ${tmdbBox}
     <form method="POST" action="/admin/item/create" id="addForm">
       <input type="hidden" name="csrf_token" value="${htmlEscape(csrfToken)}">
       <div style="display:grid;grid-template-columns:1fr;gap:10px">
@@ -1375,10 +1450,10 @@ function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], i
               <option value="adult">🔞 21+</option>
             </select>
           </div>
-          <div><label>Title</label><input type="text" name="title" placeholder="ဥပမာ - Action 2025" required></div>
+          <div><label>Title</label><input type="text" name="title" id="addTitle" placeholder="ဥပမာ - Action 2025" required></div>
         </div>
-        <div><label>Poster URL (ထောင်လိုက် ပုံ — card အတွက်)</label><input type="url" name="poster" placeholder="https://.../poster.jpg"></div>
-        <div><label>Slide Banner URL (အလျားလိုက် ပုံ — slider အတွက်၊ optional)</label><input type="url" name="slide_image" placeholder="https://.../banner-wide.jpg">
+        <div><label>Poster URL (ထောင်လိုက် ပုံ — card အတွက်)</label><input type="url" name="poster" id="addPoster" placeholder="https://.../poster.jpg"></div>
+        <div><label>Slide Banner URL (အလျားလိုက် ပုံ — slider အတွက်၊ optional)</label><input type="url" name="slide_image" id="addSlide" placeholder="https://.../banner-wide.jpg">
           <div style="font-size:11px;color:var(--mut);margin-top:4px">ကွက်လပ်ထားရင် slider မှာ poster ကို သုံးမယ်။ (16:9 / landscape ပုံ ထည့်ရင် အကောင်းဆုံး)</div>
         </div>
         <div class="single-fields"><label>Video URL (direct / R2)</label><input type="url" name="video_url" placeholder="https://.../video.mp4"></div>
@@ -1388,7 +1463,7 @@ function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], i
   <textarea name="seasons_json" placeholder="JSON Format ဖြင့်ဖြစ်စေ သို့မဟုတ် ဖုန်းထဲက ကူးယူလာသည့် SQLite Task logs/စာသားများကိုဖြစ်စေ ဤနေရာတွင် တိုက်ရိုက် Paste ချပေးနိုင်ပါသည်။"></textarea>
   <div style="font-size:11px;color:var(--mut);margin-top:4px">Format: JSON စနစ် (သို့မဟုတ်) SQLite task log များကို တိုက်ရိုက်ထည့်သွင်းပါက စနစ်မှ အလိုအလျောက် အပိုင်းများကို ခွဲထုတ်ပေးပါမည်။</div>
 </div>
-        <div><label>Note / ဖော်ပြချက် (optional)</label><textarea name="note" placeholder="ဇာတ်လမ်းအကျဉ်း…" style="min-height:80px"></textarea></div>
+        <div><label>Note / ဖော်ပြချက် (optional)</label><textarea name="note" id="addNote" placeholder="ဇာတ်လမ်းအကျဉ်း…" style="min-height:80px"></textarea></div>
       </div>
       <button type="submit" class="btn" style="margin-top:14px">တင်မယ်</button>
     </form>
@@ -1487,6 +1562,28 @@ function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], i
     root.querySelectorAll('.series-fields').forEach(function(el){ el.style.display=isSeries?'block':'none'; });
     root.querySelectorAll('.single-fields').forEach(function(el){ el.style.display=isSeries?'none':'block'; });
   }
+  // TMDB auto-fill
+  (function(){
+    var btn=document.getElementById('tmdbBtn'); if(!btn) return;
+    btn.addEventListener('click',function(){
+      var q=(document.getElementById('tmdbQ').value||document.getElementById('addTitle').value||'').trim();
+      var type=document.getElementById('addType').value;
+      var msg=document.getElementById('tmdbMsg');
+      if(!q){ msg.textContent='Title ထည့်ပါ။'; return; }
+      msg.textContent='ရှာနေသည်…';
+      fetch('/admin/tmdb?q='+encodeURIComponent(q)+'&type='+encodeURIComponent(type))
+        .then(function(r){return r.json();})
+        .then(function(d){
+          if(!d.ok){ msg.textContent=d.error||'ရှာမတွေ့ပါ'; return; }
+          if(d.poster) document.getElementById('addPoster').value=d.poster;
+          if(d.backdrop) document.getElementById('addSlide').value=d.backdrop;
+          if(d.overview && !document.getElementById('addNote').value) document.getElementById('addNote').value=d.overview;
+          if(!document.getElementById('addTitle').value && d.tmdb_title) document.getElementById('addTitle').value=d.tmdb_title+(d.year?(' ('+d.year+')'):'');
+          msg.textContent='✅ ဖြည့်ပြီးပါပြီ: '+(d.tmdb_title||q)+(d.year?(' · '+d.year):'');
+        })
+        .catch(function(){ msg.textContent='Error ဖြစ်သွားသည်။'; });
+    });
+  })();
 </script>`;
   return pageShell("Admin — CM FLIX", body, { extraCss: AUTH_CSS });
 }
@@ -1559,23 +1656,19 @@ function parseRawTextToSeasons(rawText) {
     let seasonNum = 1;
     let epNum = null;
     
-    // Pattern 1: S01E02 / S1E2 / s1e01 / S01EP02
     const s1e1 = decoded.match(/[sS](\d+)[eE][pP]?(\d+)/);
     if (s1e1) {
       seasonNum = parseInt(s1e1[1], 10);
       epNum = parseInt(s1e1[2], 10);
     } else {
-      // Pattern 2: E02, E2, E10 (not part of another word)
       const eOnly = decoded.match(/(?:[^a-zA-Z0-9]|^)[eE](\d+)(?:[^a-zA-Z0-9]|$)/);
       if (eOnly) {
         epNum = parseInt(eOnly[1], 10);
       } else {
-        // Pattern 3: Ep1, Ep-01, Episode 1 (ရှေ့တွင် စာလုံးမရှိရပါ။ 'step' ကဲ့သို့သော စာလုံးများကို တားဆီးရန်)
         const epWord = decoded.match(/(?:[^a-zA-Z0-9]|^)(?:ep|episode)[-_\s]?(\d+)/i);
         if (epWord) {
           epNum = parseInt(epWord[1], 10);
         } else {
-          // Pattern 4: any isolated number before .mp4
           const baseName = decoded.split('/').pop() || "";
           const numOnly = baseName.match(/(?:^|[^0-9])(\d+)(?:\.mp4|\.mkv|\.avi|$)/i);
           if (numOnly) {
@@ -1585,7 +1678,6 @@ function parseRawTextToSeasons(rawText) {
       }
     }
     
-    // Safety Guard: ရက်စွဲများ သို့မဟုတ် ID နံပါတ်စဉ်အရှည်ကြီးများ မှားယွင်းမဝင်စေရန် (အပိုင်းနံပါတ်သည် ၁၀၀၀ ကျော်ပါက ပယ်ဖျက်မည်)
     if (epNum !== null && epNum > 1000) {
       epNum = null;
     }
@@ -1731,6 +1823,7 @@ export async function onRequest(context) {
 
   // ───────────── HOME ─────────────
   if (path === "/" && method === "GET") {
+    const user = await getCurrentUser(request, env);
     const all = await listItems(env);
     const byType = (t) => all.filter(i => i.type === t);
     const sections = [
@@ -1747,13 +1840,14 @@ export async function onRequest(context) {
       tag: (CATEGORIES[i.type] || CATEGORIES.movie).name.toUpperCase(),
       link: "/watch/" + i.id,
     }));
-    return new Response(homePage(slides, sections), { headers: { "content-type": "text/html; charset=utf-8" } });
+    return new Response(homePage(slides, sections, user), { headers: { "content-type": "text/html; charset=utf-8" } });
   }
 
   // ───────────── CATEGORY GRID ─────────────
   if (path.startsWith("/category/") && method === "GET") {
     const cat = path.slice("/category/".length).split("/")[0];
     if (!isValidCategory(cat)) return Response.redirect(new URL("/", url).toString(), 302);
+    const user = await getCurrentUser(request, env);
     const all = (await listItems(env)).filter(i => i.type === cat);
     const total = all.length;
     const totalPages = Math.max(1, Math.ceil(total / ITEMS_PER_PAGE));
@@ -1763,13 +1857,14 @@ export async function onRequest(context) {
     const slice = all.slice((page - 1) * ITEMS_PER_PAGE, page * ITEMS_PER_PAGE);
     const c = CATEGORIES[cat];
     return new Response(
-      gridPage(`${c.icon} ${c.name}`, cat, slice, page, totalPages, total, (p) => `/category/${cat}?page=${p}`),
+      gridPage(`${c.icon} ${c.name}`, cat, slice, page, totalPages, total, (p) => `/category/${cat}?page=${p}`, "", user),
       { headers: { "content-type": "text/html; charset=utf-8" } }
     );
   }
 
   // ───────────── SEARCH ─────────────
   if (path === "/search" && method === "GET") {
+    const user = await getCurrentUser(request, env);
     const q = String(url.searchParams.get("q") || "").trim().slice(0, 80);
     const ql = q.toLowerCase();
     const all = ql ? (await listItems(env)).filter(i => (i.title || "").toLowerCase().includes(ql)) : [];
@@ -1780,7 +1875,7 @@ export async function onRequest(context) {
     if (page > totalPages) page = totalPages;
     const slice = all.slice((page - 1) * ITEMS_PER_PAGE, page * ITEMS_PER_PAGE);
     return new Response(
-      gridPage(`🔍 "${q}"`, "", slice, page, totalPages, total, (p) => `/search?q=${encodeURIComponent(q)}&page=${p}`, q),
+      gridPage(`🔍 "${q}"`, "", slice, page, totalPages, total, (p) => `/search?q=${encodeURIComponent(q)}&page=${p}`, q, user),
       { headers: { "content-type": "text/html; charset=utf-8" } }
     );
   }
@@ -1860,8 +1955,6 @@ export async function onRequest(context) {
 
     if (v.d === 1) {
         let downloadName = item.title || "video";
-        
-        // အကယ်၍ စီးရီးဖြစ်ပါက Season နှင့် Episode အမည်ကို ဖိုင်အမည်တွင် အလိုအလျောက် ပေါင်းစပ်မည်
         if (item.type === "series" && v.s !== -1 && v.e !== -1) {
           const seasonNo = item.seasons?.[v.s]?.season || (v.s + 1);
           const epNo = item.seasons?.[v.s]?.episodes?.[v.e]?.ep || (v.e + 1);
@@ -1869,7 +1962,6 @@ export async function onRequest(context) {
           const eStr = String(epNo).padStart(2, "0");
           downloadName = `${downloadName} S${sStr}E${eStr}`;
         }
-        
         const safeName = downloadName
           .replace(/[^\w\-. ]+/g, "_").slice(0, 80).trim() || "video";
         const ext = real.split("?")[0].split(".").pop();
@@ -1971,6 +2063,19 @@ export async function onRequest(context) {
     const { token: csrfToken, isNew: csrfNew } = await getOrCreateCsrf(request, env);
     const setCsrf = csrfNew ? { "Set-Cookie": csrfCookieHeader(csrfToken) } : {};
 
+    // TMDB lookup (JSON, admin only)
+    if (path === "/admin/tmdb" && method === "GET") {
+      if (!tmdbConfigured(env)) {
+        return new Response(JSON.stringify({ ok: false, error: "TMDB_API_KEY မထည့်ရသေးပါ။" }), { headers: { "content-type": "application/json" } });
+      }
+      const q = String(url.searchParams.get("q") || "").trim().slice(0, 100);
+      const type = isValidCategory(url.searchParams.get("type")) ? url.searchParams.get("type") : "movie";
+      if (!q) return new Response(JSON.stringify({ ok: false, error: "Title ထည့်ပါ။" }), { headers: { "content-type": "application/json" } });
+      const r = await tmdbSearch(env, q, type);
+      if (!r) return new Response(JSON.stringify({ ok: false, error: "TMDB မှာ ရှာမတွေ့ပါ။" }), { headers: { "content-type": "application/json" } });
+      return new Response(JSON.stringify({ ok: true, ...r }), { headers: { "content-type": "application/json", "cache-control": "no-store" } });
+    }
+
     // ADMIN DASHBOARD
     if (path === "/admin" && method === "GET") {
       const res = await db(env).prepare(
@@ -2012,7 +2117,7 @@ export async function onRequest(context) {
       const newKey = url.searchParams.get("newkey") || "";
       const info = url.searchParams.get("info") || "";
       return new Response(
-        adminPage(keys, stats, csrfToken, newKey, info, items, itPage, itTotalPages, itQuery, itTotal, isValidCategory(itType) ? itType : ""),
+        adminPage(keys, stats, csrfToken, newKey, info, items, itPage, itTotalPages, itQuery, itTotal, isValidCategory(itType) ? itType : "", tmdbConfigured(env)),
         { headers: { "content-type": "text/html; charset=utf-8", ...setCsrf } }
       );
     }
