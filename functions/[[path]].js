@@ -963,8 +963,33 @@ function watchPage(item, user, gated, streams) {
     .season-tabs::-webkit-scrollbar{display:none}
     .season-tab{flex:0 0 auto;padding:8px 17px;border-radius:10px;border:1px solid var(--line);background:#131b2e;color:#fff;font-weight:700;font-size:13.5px;cursor:pointer;font-family:inherit;transition:.15s}
     .season-tab.on{background:linear-gradient(135deg,var(--acc),var(--acc2));border-color:transparent}
-    .ep-list{display:none;flex-direction:column;gap:8px;margin-top:6px}
-    .ep-list.on{display:flex}
+    .ep-list{
+  display:none;
+  flex-direction:column;
+  gap:8px;
+  margin-top:6px;
+  /* ဒေါင်လိုက် Scroll စနစ် ထည့်သွင်းခြင်း */
+  max-height: 380px; /* အမြင့်ဆုံး 380px ထိပဲပြပြီး ပိုပါက scroll ပေါ်မည် */
+  overflow-y: auto;
+  padding-right: 6px; /* scrollbar နှင့် မကပ်စေရန် */
+}
+.ep-list.on{display:flex}
+
+/* Scrollbar ပုံစံကို ပိုမိုလှပအောင် သတ်မှတ်ခြင်း (စိတ်ကြိုက်) */
+.ep-list::-webkit-scrollbar {
+  width: 5px;
+}
+.ep-list::-webkit-scrollbar-track {
+  background: rgba(255,255,255,0.02);
+  border-radius: 4px;
+}
+.ep-list::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 4px;
+}
+.ep-list::-webkit-scrollbar-thumb:hover {
+  background: var(--acc2);
+}
     .ep-btn{display:flex;align-items:center;gap:12px;width:100%;text-align:left;padding:11px 14px;border-radius:11px;border:1px solid var(--line);background:#0d1424;color:#fff;cursor:pointer;font-family:inherit;transition:.14s}
     .ep-btn:hover{border-color:var(--acc2);background:#131b2e}
     .ep-btn.playing{border-color:var(--acc);background:#1e1420}
