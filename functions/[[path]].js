@@ -390,7 +390,7 @@ function rowToItem(row) {
     created_at: row.created_at || 0,
     video_url: row.video_url || "",
     download_url: row.download_url || "",
-    proxy_disabled: !!row.proxy_disabled, // ဤလိုင်းအသစ် တိုးလာပါသည်
+    proxy_disabled: row.proxy_disabled ? 1 : 0,
   };
   if (item.type === "series") {
     try { item.seasons = JSON.parse(row.seasons || "[]"); } catch (_) { item.seasons = []; }
@@ -424,7 +424,7 @@ async function putItem(env, id, data) {
     data.video_url || "",
     data.download_url || "",
     data.type === "series" ? JSON.stringify(data.seasons || []) : "",
-    data.proxy_disabled ? 1 : 0 // proxy_disabled တန်ဖိုးကို 0 သို့မဟုတ် 1 အဖြစ် သိမ်းဆည်းမည်
+    data.proxy_disabled ? 1 : 0
   ).run();
 }
 
@@ -1445,18 +1445,12 @@ function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], i
     <form method="POST" action="/admin/item/create" id="addForm">
       <input type="hidden" name="csrf_token" value="${htmlEscape(csrfToken)}">
       <div style="display:grid;grid-template-columns:1fr;gap:10px">
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
           <div><label>Category</label>
             <select name="type" id="addType" onchange="cmToggleType(this.value,'add')">
               <option value="movie">🎬 Movie</option>
               <option value="series">📺 Series</option>
               <option value="adult">🔞 21+</option>
-            </select>
-          </div>
-          <div><label>Stream Proxy</label>
-            <select name="proxy_disabled">
-              <option value="0">ON (လုံခြုံရေးမြင့် - Proxy)</option>
-              <option value="1">OFF (အမြန်ဆုံး - မူရင်းလင့်ခ်)</option>
             </select>
           </div>
           <div><label>Title</label><input type="text" name="title" id="addTitle" placeholder="ဥပမာ - Action 2025" required></div>
@@ -1473,6 +1467,13 @@ function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], i
   <div style="font-size:11px;color:var(--mut);margin-top:4px">Format: JSON စနစ် (သို့မဟုတ်) SQLite task log များကို တိုက်ရိုက်ထည့်သွင်းပါက စနစ်မှ အလိုအလျောက် အပိုင်းများကို ခွဲထုတ်ပေးပါမည်။</div>
 </div>
         <div><label>Note / ဖော်ပြချက် (optional)</label><textarea name="note" id="addNote" placeholder="ဇာတ်လမ်းအကျဉ်း…" style="min-height:80px"></textarea></div>
+        <div style="display:flex;align-items:center;gap:10px;background:#0e1830;border:1px solid var(--line);border-radius:11px;padding:12px">
+          <input type="checkbox" name="proxy_disabled" id="addProxyOff" value="1" style="width:18px;height:18px;flex:0 0 18px">
+          <label for="addProxyOff" style="margin:0;cursor:pointer;flex:1">
+            🔓 Proxy ပိတ်မယ် (မူရင်း link တိုက်ရိုက်ပြ)
+            <div style="font-size:11px;color:var(--mut);font-weight:400;margin-top:3px">တိုက်ဖြုတ်ထားရင် (default) → signed/token အချိန်ပိုင်း link နဲ့ proxy ဖြင့်ပြမယ်။ အမှန်ခြစ်ရင် → မူရင်း link အတိုင်း တိုက်ရိုက်ပြမယ် (token မထုတ်)။</div>
+          </label>
+        </div>
       </div>
       <button type="submit" class="btn" style="margin-top:14px">တင်မယ်</button>
     </form>
@@ -1613,18 +1614,12 @@ function adminEditPage(item, csrfToken, error = "") {
   <form method="POST" action="/admin/item/update" id="editForm">
     <input type="hidden" name="csrf_token" value="${htmlEscape(csrfToken)}">
     <input type="hidden" name="id" value="${htmlEscape(item.id)}">
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
       <div><label>Category</label>
         <select name="type" onchange="cmToggleType(this.value,'edit')">
           <option value="movie" ${item.type === "movie" ? "selected" : ""}>🎬 Movie</option>
           <option value="series" ${item.type === "series" ? "selected" : ""}>📺 Series</option>
           <option value="adult" ${item.type === "adult" ? "selected" : ""}>🔞 21+</option>
-        </select>
-      </div>
-      <div><label>Stream Proxy</label>
-        <select name="proxy_disabled">
-          <option value="0" ${!item.proxy_disabled ? "selected" : ""}>ON (လုံခြုံရေးမြင့် - Proxy)</option>
-          <option value="1" ${item.proxy_disabled ? "selected" : ""}>OFF (အမြန်ဆုံး - မူရင်းလင့်ခ်)</option>
         </select>
       </div>
       <div><label>Title</label><input type="text" name="title" value="${htmlEscape(item.title || "")}" required></div>
@@ -1640,6 +1635,13 @@ function adminEditPage(item, csrfToken, error = "") {
       <textarea name="seasons_json" style="min-height:220px;font-family:ui-monospace,monospace;font-size:12.5px">${htmlEscape(seasonsJson)}</textarea>
     </div>
     <label>Note</label><textarea name="note" style="min-height:100px">${htmlEscape(item.note || "")}</textarea>
+    <div style="display:flex;align-items:center;gap:10px;background:#0e1830;border:1px solid var(--line);border-radius:11px;padding:12px;margin-top:14px">
+      <input type="checkbox" name="proxy_disabled" id="editProxyOff" value="1" ${item.proxy_disabled ? "checked" : ""} style="width:18px;height:18px;flex:0 0 18px">
+      <label for="editProxyOff" style="margin:0;cursor:pointer;flex:1">
+        🔓 Proxy ပိတ်မယ် (မူရင်း link တိုက်ရိုက်ပြ)
+        <div style="font-size:11px;color:var(--mut);font-weight:400;margin-top:3px">တိုက်ဖြုတ်ထားရင် → signed/token link နဲ့ proxy ဖြင့်ပြမယ်။ အမှန်ခြစ်ရင် → မူရင်း link အတိုင်း တိုက်ရိုက်ပြမယ်။</div>
+      </label>
+    </div>
     <button type="submit" class="btn">💾 သိမ်းမယ်</button>
   </form>
 </div></div>
@@ -1792,35 +1794,7 @@ async function buildStreams(env, item, gated, user) {
     if (item.type === "series") return { seasons: [] };
     return { single: { video: "", dl: "" } };
   }
-
-  // ★★ Proxy OFF ထားပါက မူရင်းလင့်ခ်များအတိုင်း တိုက်ရိုက် ပေးပို့မည် ★★
-  if (item.proxy_disabled) {
-    if (item.type === "series") {
-      const seasons = Array.isArray(item.seasons) ? item.seasons : [];
-      const out = [];
-      for (let si = 0; si < seasons.length; si++) {
-        const eps = seasons[si].episodes || [];
-        const row = [];
-        for (let ei = 0; ei < eps.length; ei++) {
-          row.push({
-            video: eps[ei].video_url || "",
-            dl: eps[ei].download_url || eps[ei].video_url || ""
-          });
-        }
-        out.push(row);
-      }
-      return { seasons: out };
-    } else {
-      return {
-        single: {
-          video: item.video_url || "",
-          dl: item.download_url || item.video_url || ""
-        }
-      };
-    }
-  }
-
-  // Proxy ON ဖြစ်ပါက ကိုယ်ပိုင် Proxy ဖြင့် စနစ်တကျ လမ်းကြောင်းပေးမည်
+  const noProxy = !!item.proxy_disabled;
   const u = await userStreamTag(user);
   if (item.type === "series") {
     const seasons = Array.isArray(item.seasons) ? item.seasons : [];
@@ -1829,14 +1803,28 @@ async function buildStreams(env, item, gated, user) {
       const eps = seasons[si].episodes || [];
       const row = [];
       for (let ei = 0; ei < eps.length; ei++) {
-        const video = await makeStreamUrl(env, item.id, { s: si, e: ei, download: false, u });
-        const dl = await makeStreamUrl(env, item.id, { s: si, e: ei, download: true, u });
-        row.push({ video, dl });
+        if (noProxy) {
+          // proxy မသုံးဘဲ မူရင်း link တိုက်ရိုက်
+          const ep = eps[ei] || {};
+          const video = ep.video_url || "";
+          const dl = ep.download_url || ep.video_url || "";
+          row.push({ video, dl });
+        } else {
+          const video = await makeStreamUrl(env, item.id, { s: si, e: ei, download: false, u });
+          const dl = await makeStreamUrl(env, item.id, { s: si, e: ei, download: true, u });
+          row.push({ video, dl });
+        }
       }
       out.push(row);
     }
     return { seasons: out };
   } else {
+    if (noProxy) {
+      // proxy မသုံးဘဲ မူရင်း link တိုက်ရိုက်
+      const video = item.video_url || "";
+      const dl = item.download_url || item.video_url || "";
+      return { single: { video, dl } };
+    }
     const video = await makeStreamUrl(env, item.id, { s: -1, e: -1, download: false, u });
     const dl = await makeStreamUrl(env, item.id, { s: -1, e: -1, download: true, u });
     return { single: { video, dl } };
@@ -2190,12 +2178,11 @@ export async function onRequest(context) {
       const poster = String(form.poster || "").trim().slice(0, 600);
       const slide_image = String(form.slide_image || "").trim().slice(0, 600);
       const note = String(form.note || "").trim().slice(0, 5000);
-      const proxy_disabled = parseInt(form.proxy_disabled || "0", 10) === 1 ? 1 : 0; // ဤလိုင်းအသစ် တိုးလာပါသည်
       if (!title) return redirectInfo("Title ဖြည့်ပါ။");
       if (poster && !isHttpUrl(poster)) return redirectInfo("Poster link မှားနေပါတယ်။");
       if (slide_image && !isHttpUrl(slide_image)) return redirectInfo("Slide banner link မှားနေပါတယ်။");
       const id = generateItemId();
-      const data = { id, type, title, poster, slide_image, note, created_at: Date.now(), proxy_disabled }; // data ထဲတွင် ထည့်ပေါင်းသည်
+      const data = { id, type, title, poster, slide_image, note, created_at: Date.now(), proxy_disabled: form.proxy_disabled ? 1 : 0 };
       if (type === "series") {
         const r = sanitizeSeasons(form.seasons_json || "");
         if (!r.ok) return redirectInfo(r.err);
@@ -2224,13 +2211,12 @@ export async function onRequest(context) {
       const poster = String(form.poster || "").trim().slice(0, 600);
       const slide_image = String(form.slide_image || "").trim().slice(0, 600);
       const note = String(form.note || "").trim().slice(0, 5000);
-      const proxy_disabled = parseInt(form.proxy_disabled || "0", 10) === 1 ? 1 : 0; // ဤလိုင်းအသစ် တိုးလာပါသည်
       if (!title) return new Response(adminEditPage(existing, csrfToken, "Title ဖြည့်ပါ။"), { headers: { "content-type": "text/html; charset=utf-8" } });
       if (slide_image && !isHttpUrl(slide_image)) return new Response(adminEditPage({ ...existing, type, title, poster, slide_image, note }, csrfToken, "Slide banner link မှားနေပါတယ်။"), { headers: { "content-type": "text/html; charset=utf-8" } });
-      const data = { id, type, title, poster, slide_image, note, created_at: existing.created_at || Date.now(), proxy_disabled }; // data ထဲတွင် ထည့်ပေါင်းသည်
+      const data = { id, type, title, poster, slide_image, note, created_at: existing.created_at || Date.now(), proxy_disabled: form.proxy_disabled ? 1 : 0 };
       if (type === "series") {
         const r = sanitizeSeasons(form.seasons_json || "");
-        if (!r.ok) return new Response(adminEditPage({ ...existing, type, title, poster, slide_image, note }, csrfToken, r.err), { headers: { "content-type": "text/html; charset=utf-8" } });
+        if (!r.ok) return new Response(adminEditPage({ ...existing, type, title, poster, slide_image, note, proxy_disabled: form.proxy_disabled ? 1 : 0 }, csrfToken, r.err), { headers: { "content-type": "text/html; charset=utf-8" } });
         data.seasons = r.seasons;
       } else {
         const video_url = String(form.video_url || "").trim().slice(0, 1000);
