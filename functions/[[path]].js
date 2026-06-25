@@ -1015,7 +1015,7 @@ function watchPage(item, user, gated, streams) {
       </div>`;
     playerArea = `
       <div class="player-box">
-        <video id="cmPlayer" playsinline controls crossorigin poster="${posterImg}"></video>
+        <video id="cmPlayer" playsinline controls poster="${posterImg}"></video>
         <div class="player-empty" id="playerEmpty">▶ အပိုင်းတစ်ခုကို ရွေးပါ</div>
       </div>
       <div class="now-playing" id="nowPlaying"></div>`;
