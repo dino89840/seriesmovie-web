@@ -1777,14 +1777,15 @@ async function getStreamLink(env, item, si, ei, download, u, SHARED_SECRET, chos
   let targetProxyUrl = "";
   if (chosenProxy === "B") targetProxyUrl = PROXY_B_URL;
   if (chosenProxy === "C") targetProxyUrl = PROXY_C_URL;
-  
+
   if (targetProxyUrl) {
     const realUrl = resolveRealUrl(item, si, ei, download);
     if (!realUrl) return "";
-    
+
     const exp = Date.now() + STREAM_TTL_SEC * 1000;
+    // signature base — proxy ဘက်နဲ့ အတိအကျ တူရမယ်: realUrl|exp
     const sig = await hmacSign(SHARED_SECRET, `${realUrl}|${exp}`);
-    
+
     let downloadName = item.title || "video";
     if (item.type === "series" && si !== -1 && ei !== -1) {
       const seasonNo = item.seasons?.[si]?.season || (si + 1);
@@ -1796,13 +1797,23 @@ async function getStreamLink(env, item, si, ei, download, u, SHARED_SECRET, chos
     const safeName = downloadName.replace(/[^\w\-. ]+/g, "_").slice(0, 80).trim() || "video";
     const ext = realUrl.split("?")[0].split(".").pop();
     const fname = /^[a-z0-9]{2,5}$/i.test(ext) ? `${safeName}.${ext}` : `${safeName}.mp4`;
-    
-    return `${targetProxyUrl}/stream-proxy/${encodeURIComponent(realUrl)}?exp=${exp}&sig=${sig}&d=${download ? 1 : 0}&fn=${encodeURIComponent(fname)}`;
+
+    // ★★ အဓိက ပြင်ဆင်ချက် ★★
+    // realUrl ကို path ထဲ မထည့်တော့ဘူး (double-encode ပြဿနာ ဖြစ်စေတယ်)။
+    // URLSearchParams သုံးပြီး query parameter အဖြစ် သေချာ encode လုပ်ပြီး ပို့မယ်။
+    const qs = new URLSearchParams();
+    qs.set("url", realUrl);
+    qs.set("exp", String(exp));
+    qs.set("sig", sig);
+    qs.set("d", download ? "1" : "0");
+    qs.set("fn", fname);
+    return `${targetProxyUrl}/stream-proxy?${qs.toString()}`;
   } else {
-    // Local Proxy (A) ကိုယ်ပိုင်လမ်းကြောင်းဟောင်းအတိုင်း ပြသမည်
+    // Local Proxy (A) — လမ်းကြောင်းဟောင်းအတိုင်း
     return await makeStreamUrl(env, item.id, { s: si, e: ei, download, u });
   }
 }
+
 
 async function buildStreams(env, item, gated, user) {
   if (gated) {
