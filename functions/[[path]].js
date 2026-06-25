@@ -390,7 +390,6 @@ function rowToItem(row) {
     created_at: row.created_at || 0,
     video_url: row.video_url || "",
     download_url: row.download_url || "",
-    proxy_disabled: row.proxy_disabled ? 1 : 0,
   };
   if (item.type === "series") {
     try { item.seasons = JSON.parse(row.seasons || "[]"); } catch (_) { item.seasons = []; }
@@ -406,13 +405,12 @@ async function getItem(env, id) {
 
 async function putItem(env, id, data) {
   await db(env).prepare(
-    `INSERT INTO items (id, type, title, poster, slide_image, note, created_at, video_url, download_url, seasons, proxy_disabled)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?)
+    `INSERT INTO items (id, type, title, poster, slide_image, note, created_at, video_url, download_url, seasons)
+     VALUES (?,?,?,?,?,?,?,?,?,?)
      ON CONFLICT(id) DO UPDATE SET
        type=excluded.type, title=excluded.title, poster=excluded.poster,
        slide_image=excluded.slide_image, note=excluded.note, created_at=excluded.created_at,
-       video_url=excluded.video_url, download_url=excluded.download_url, seasons=excluded.seasons,
-       proxy_disabled=excluded.proxy_disabled`
+       video_url=excluded.video_url, download_url=excluded.download_url, seasons=excluded.seasons`
   ).bind(
     id,
     data.type || "movie",
@@ -423,8 +421,7 @@ async function putItem(env, id, data) {
     data.created_at || 0,
     data.video_url || "",
     data.download_url || "",
-    data.type === "series" ? JSON.stringify(data.seasons || []) : "",
-    data.proxy_disabled ? 1 : 0
+    data.type === "series" ? JSON.stringify(data.seasons || []) : ""
   ).run();
 }
 
@@ -1015,7 +1012,7 @@ function watchPage(item, user, gated, streams) {
       </div>`;
     playerArea = `
       <div class="player-box">
-        <video id="cmPlayer" playsinline controls poster="${posterImg}"></video>
+        <video id="cmPlayer" playsinline controls crossorigin poster="${posterImg}"></video>
         <div class="player-empty" id="playerEmpty">▶ အပိုင်းတစ်ခုကို ရွေးပါ</div>
       </div>
       <div class="now-playing" id="nowPlaying"></div>`;
@@ -1136,21 +1133,16 @@ ${footer()}`;
   var cur={video:'',dl:'',title:''};
 
   var player=null;
-  var isProxyOff = ${item.proxy_disabled ? "true" : "false"};
-  
-  // Proxy ဖွင့်ထားမှသာ Plyr ကို စတင်ပတ်မည်။ ပိတ်ထားပါက မူရင်း Native Player ကို သုံးမည်။
-  if (!isProxyOff) {
-    try{
-      player=new Plyr(v,{
-        controls:['play-large','play','progress','current-time','duration','mute','volume','settings','pip','airplay','fullscreen'],
-        settings:['quality','speed','loop'],
-        speed:{selected:1,options:[0.5,0.75,1,1.25,1.5,2]},
-        ratio:'16:9',
-        keyboard:{focused:true,global:true},
-        tooltips:{controls:true,seek:true}
-      });
-    }catch(_){}
-  }
+  try{
+    player=new Plyr(v,{
+      controls:['play-large','play','progress','current-time','duration','mute','volume','settings','pip','airplay','fullscreen'],
+      settings:['quality','speed','loop'],
+      speed:{selected:1,options:[0.5,0.75,1,1.25,1.5,2]},
+      ratio:'16:9',
+      keyboard:{focused:true,global:true},
+      tooltips:{controls:true,seek:true}
+    });
+  }catch(_){}
   if (player) {
     player.on('enterfullscreen', function() {
       if (screen.orientation && screen.orientation.lock) {
@@ -1472,13 +1464,6 @@ function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], i
   <div style="font-size:11px;color:var(--mut);margin-top:4px">Format: JSON စနစ် (သို့မဟုတ်) SQLite task log များကို တိုက်ရိုက်ထည့်သွင်းပါက စနစ်မှ အလိုအလျောက် အပိုင်းများကို ခွဲထုတ်ပေးပါမည်။</div>
 </div>
         <div><label>Note / ဖော်ပြချက် (optional)</label><textarea name="note" id="addNote" placeholder="ဇာတ်လမ်းအကျဉ်း…" style="min-height:80px"></textarea></div>
-        <div style="display:flex;align-items:center;gap:10px;background:#0e1830;border:1px solid var(--line);border-radius:11px;padding:12px">
-          <input type="checkbox" name="proxy_disabled" id="addProxyOff" value="1" style="width:18px;height:18px;flex:0 0 18px">
-          <label for="addProxyOff" style="margin:0;cursor:pointer;flex:1">
-            🔓 Proxy ပိတ်မယ် (မူရင်း link တိုက်ရိုက်ပြ)
-            <div style="font-size:11px;color:var(--mut);font-weight:400;margin-top:3px">တိုက်ဖြုတ်ထားရင် (default) → signed/token အချိန်ပိုင်း link နဲ့ proxy ဖြင့်ပြမယ်။ အမှန်ခြစ်ရင် → မူရင်း link အတိုင်း တိုက်ရိုက်ပြမယ် (token မထုတ်)။</div>
-          </label>
-        </div>
       </div>
       <button type="submit" class="btn" style="margin-top:14px">တင်မယ်</button>
     </form>
@@ -1640,13 +1625,6 @@ function adminEditPage(item, csrfToken, error = "") {
       <textarea name="seasons_json" style="min-height:220px;font-family:ui-monospace,monospace;font-size:12.5px">${htmlEscape(seasonsJson)}</textarea>
     </div>
     <label>Note</label><textarea name="note" style="min-height:100px">${htmlEscape(item.note || "")}</textarea>
-    <div style="display:flex;align-items:center;gap:10px;background:#0e1830;border:1px solid var(--line);border-radius:11px;padding:12px;margin-top:14px">
-      <input type="checkbox" name="proxy_disabled" id="editProxyOff" value="1" ${item.proxy_disabled ? "checked" : ""} style="width:18px;height:18px;flex:0 0 18px">
-      <label for="editProxyOff" style="margin:0;cursor:pointer;flex:1">
-        🔓 Proxy ပိတ်မယ် (မူရင်း link တိုက်ရိုက်ပြ)
-        <div style="font-size:11px;color:var(--mut);font-weight:400;margin-top:3px">တိုက်ဖြုတ်ထားရင် → signed/token link နဲ့ proxy ဖြင့်ပြမယ်။ အမှန်ခြစ်ရင် → မူရင်း link အတိုင်း တိုက်ရိုက်ပြမယ်။</div>
-      </label>
-    </div>
     <button type="submit" class="btn">💾 သိမ်းမယ်</button>
   </form>
 </div></div>
@@ -1799,7 +1777,6 @@ async function buildStreams(env, item, gated, user) {
     if (item.type === "series") return { seasons: [] };
     return { single: { video: "", dl: "" } };
   }
-  const noProxy = !!item.proxy_disabled;
   const u = await userStreamTag(user);
   if (item.type === "series") {
     const seasons = Array.isArray(item.seasons) ? item.seasons : [];
@@ -1808,28 +1785,14 @@ async function buildStreams(env, item, gated, user) {
       const eps = seasons[si].episodes || [];
       const row = [];
       for (let ei = 0; ei < eps.length; ei++) {
-        if (noProxy) {
-          // proxy မသုံးဘဲ မူရင်း link တိုက်ရိုက်
-          const ep = eps[ei] || {};
-          const video = ep.video_url || "";
-          const dl = ep.download_url || ep.video_url || "";
-          row.push({ video, dl });
-        } else {
-          const video = await makeStreamUrl(env, item.id, { s: si, e: ei, download: false, u });
-          const dl = await makeStreamUrl(env, item.id, { s: si, e: ei, download: true, u });
-          row.push({ video, dl });
-        }
+        const video = await makeStreamUrl(env, item.id, { s: si, e: ei, download: false, u });
+        const dl = await makeStreamUrl(env, item.id, { s: si, e: ei, download: true, u });
+        row.push({ video, dl });
       }
       out.push(row);
     }
     return { seasons: out };
   } else {
-    if (noProxy) {
-      // proxy မသုံးဘဲ မူရင်း link တိုက်ရိုက်
-      const video = item.video_url || "";
-      const dl = item.download_url || item.video_url || "";
-      return { single: { video, dl } };
-    }
     const video = await makeStreamUrl(env, item.id, { s: -1, e: -1, download: false, u });
     const dl = await makeStreamUrl(env, item.id, { s: -1, e: -1, download: true, u });
     return { single: { video, dl } };
@@ -2187,7 +2150,7 @@ export async function onRequest(context) {
       if (poster && !isHttpUrl(poster)) return redirectInfo("Poster link မှားနေပါတယ်။");
       if (slide_image && !isHttpUrl(slide_image)) return redirectInfo("Slide banner link မှားနေပါတယ်။");
       const id = generateItemId();
-      const data = { id, type, title, poster, slide_image, note, created_at: Date.now(), proxy_disabled: form.proxy_disabled ? 1 : 0 };
+      const data = { id, type, title, poster, slide_image, note, created_at: Date.now() };
       if (type === "series") {
         const r = sanitizeSeasons(form.seasons_json || "");
         if (!r.ok) return redirectInfo(r.err);
@@ -2218,10 +2181,10 @@ export async function onRequest(context) {
       const note = String(form.note || "").trim().slice(0, 5000);
       if (!title) return new Response(adminEditPage(existing, csrfToken, "Title ဖြည့်ပါ။"), { headers: { "content-type": "text/html; charset=utf-8" } });
       if (slide_image && !isHttpUrl(slide_image)) return new Response(adminEditPage({ ...existing, type, title, poster, slide_image, note }, csrfToken, "Slide banner link မှားနေပါတယ်။"), { headers: { "content-type": "text/html; charset=utf-8" } });
-      const data = { id, type, title, poster, slide_image, note, created_at: existing.created_at || Date.now(), proxy_disabled: form.proxy_disabled ? 1 : 0 };
+      const data = { id, type, title, poster, slide_image, note, created_at: existing.created_at || Date.now() };
       if (type === "series") {
         const r = sanitizeSeasons(form.seasons_json || "");
-        if (!r.ok) return new Response(adminEditPage({ ...existing, type, title, poster, slide_image, note, proxy_disabled: form.proxy_disabled ? 1 : 0 }, csrfToken, r.err), { headers: { "content-type": "text/html; charset=utf-8" } });
+        if (!r.ok) return new Response(adminEditPage({ ...existing, type, title, poster, slide_image, note }, csrfToken, r.err), { headers: { "content-type": "text/html; charset=utf-8" } });
         data.seasons = r.seasons;
       } else {
         const video_url = String(form.video_url || "").trim().slice(0, 1000);
