@@ -1136,16 +1136,21 @@ ${footer()}`;
   var cur={video:'',dl:'',title:''};
 
   var player=null;
-  try{
-    player=new Plyr(v,{
-      controls:['play-large','play','progress','current-time','duration','mute','volume','settings','pip','airplay','fullscreen'],
-      settings:['quality','speed','loop'],
-      speed:{selected:1,options:[0.5,0.75,1,1.25,1.5,2]},
-      ratio:'16:9',
-      keyboard:{focused:true,global:true},
-      tooltips:{controls:true,seek:true}
-    });
-  }catch(_){}
+  var isProxyOff = ${item.proxy_disabled ? "true" : "false"};
+  
+  // Proxy ဖွင့်ထားမှသာ Plyr ကို စတင်ပတ်မည်။ ပိတ်ထားပါက မူရင်း Native Player ကို သုံးမည်။
+  if (!isProxyOff) {
+    try{
+      player=new Plyr(v,{
+        controls:['play-large','play','progress','current-time','duration','mute','volume','settings','pip','airplay','fullscreen'],
+        settings:['quality','speed','loop'],
+        speed:{selected:1,options:[0.5,0.75,1,1.25,1.5,2]},
+        ratio:'16:9',
+        keyboard:{focused:true,global:true},
+        tooltips:{controls:true,seek:true}
+      });
+    }catch(_){}
+  }
   if (player) {
     player.on('enterfullscreen', function() {
       if (screen.orientation && screen.orientation.lock) {
