@@ -1771,12 +1771,57 @@ function sanitizeSeasons(raw) {
 
 /* ══════════════════════════════════════════════════
    Build signed streams for watchPage
+   (Auto-detects env.PROXY_B_URL & env.PROXY_C_URL for 3-Way load balancing)
    ══════════════════════════════════════════════════ */
+async function getStreamLink(env, item, si, ei, download, u, SHARED_SECRET, chosenProxy, PROXY_B_URL, PROXY_C_URL) {
+  let targetProxyUrl = "";
+  if (chosenProxy === "B") targetProxyUrl = PROXY_B_URL;
+  if (chosenProxy === "C") targetProxyUrl = PROXY_C_URL;
+  
+  if (targetProxyUrl) {
+    const realUrl = resolveRealUrl(item, si, ei, download);
+    if (!realUrl) return "";
+    
+    const exp = Date.now() + STREAM_TTL_SEC * 1000;
+    const sig = await hmacSign(SHARED_SECRET, `${realUrl}|${exp}`);
+    
+    let downloadName = item.title || "video";
+    if (item.type === "series" && si !== -1 && ei !== -1) {
+      const seasonNo = item.seasons?.[si]?.season || (si + 1);
+      const epNo = item.seasons?.[si]?.episodes?.[ei]?.ep || (ei + 1);
+      const sStr = String(seasonNo).padStart(2, "0");
+      const eStr = String(epNo).padStart(2, "0");
+      downloadName = `${downloadName} S${sStr}E${eStr}`;
+    }
+    const safeName = downloadName.replace(/[^\w\-. ]+/g, "_").slice(0, 80).trim() || "video";
+    const ext = realUrl.split("?")[0].split(".").pop();
+    const fname = /^[a-z0-9]{2,5}$/i.test(ext) ? `${safeName}.${ext}` : `${safeName}.mp4`;
+    
+    return `${targetProxyUrl}/stream-proxy/${encodeURIComponent(realUrl)}?exp=${exp}&sig=${sig}&d=${download ? 1 : 0}&fn=${encodeURIComponent(fname)}`;
+  } else {
+    // Local Proxy (A) ကိုယ်ပိုင်လမ်းကြောင်းဟောင်းအတိုင်း ပြသမည်
+    return await makeStreamUrl(env, item.id, { s: si, e: ei, download, u });
+  }
+}
+
 async function buildStreams(env, item, gated, user) {
   if (gated) {
     if (item.type === "series") return { seasons: [] };
     return { single: { video: "", dl: "" } };
   }
+  
+  const SHARED_SECRET = env.STREAM_SECRET || env.SESSION_SECRET || STREAM_SECRET_FALLBACK;
+  const PROXY_B_URL = env.PROXY_B_URL ? String(env.PROXY_B_URL).trim().replace(/\/+$/, "") : "";
+  const PROXY_C_URL = env.PROXY_C_URL ? String(env.PROXY_C_URL).trim().replace(/\/+$/, "") : "";
+  
+  // လက်ရှိ အသုံးပြုနိုင်သော အရံဆာဗာများ၏ စာရင်းကို တည်ဆောက်ခြင်း
+  const activeProxies = ["local"];
+  if (PROXY_B_URL) activeProxies.push("B");
+  if (PROXY_C_URL) activeProxies.push("C");
+  
+  // active ဖြစ်နေသော ဆာဗာများထဲမှ တစ်ခုကို အလှည့်ကျ (Random) ရွေးချယ်ခြင်း
+  const chosenProxy = activeProxies[Math.floor(Math.random() * activeProxies.length)];
+  
   const u = await userStreamTag(user);
   if (item.type === "series") {
     const seasons = Array.isArray(item.seasons) ? item.seasons : [];
@@ -1785,16 +1830,16 @@ async function buildStreams(env, item, gated, user) {
       const eps = seasons[si].episodes || [];
       const row = [];
       for (let ei = 0; ei < eps.length; ei++) {
-        const video = await makeStreamUrl(env, item.id, { s: si, e: ei, download: false, u });
-        const dl = await makeStreamUrl(env, item.id, { s: si, e: ei, download: true, u });
+        const video = await getStreamLink(env, item, si, ei, false, u, SHARED_SECRET, chosenProxy, PROXY_B_URL, PROXY_C_URL);
+        const dl = await getStreamLink(env, item, si, ei, true, u, SHARED_SECRET, chosenProxy, PROXY_B_URL, PROXY_C_URL);
         row.push({ video, dl });
       }
       out.push(row);
     }
     return { seasons: out };
   } else {
-    const video = await makeStreamUrl(env, item.id, { s: -1, e: -1, download: false, u });
-    const dl = await makeStreamUrl(env, item.id, { s: -1, e: -1, download: true, u });
+    const video = await getStreamLink(env, item, -1, -1, false, u, SHARED_SECRET, chosenProxy, PROXY_B_URL, PROXY_C_URL);
+    const dl = await getStreamLink(env, item, -1, -1, true, u, SHARED_SECRET, chosenProxy, PROXY_B_URL, PROXY_C_URL);
     return { single: { video, dl } };
   }
 }
