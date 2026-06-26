@@ -20,7 +20,6 @@ const KEY_PREFIX       = "CM";
 
 // ── Signed stream URL ──
 const STREAM_TTL_SEC   = 6 * 3600;
-const STREAM_SECRET_FALLBACK = "SESSION_SECRET";
 
 // Rate limit
 const KEY_LOGIN_MAX_ATTEMPTS = 12;
@@ -189,7 +188,8 @@ function safeNextPath(next) {
   let n = String(next || "/").slice(0, 300);
   if (!n.startsWith("/")) return "/";
   if (n.startsWith("//")) return "/";
-  if (/[\r\n]/.test(n)) return "/";
+  if (n.startsWith("/\\")) return "/";   // backslash open-redirect ကာကွယ်
+  if (/[\r\n\t\\]/.test(n)) return "/";  // backslash + control char ကာကွယ်
   return n;
 }
 
@@ -225,7 +225,9 @@ function shortDeviceLabel(request) {
    SIGNED STREAM URL
    ══════════════════════════════════════════════════ */
 function streamSecret(env) {
-  return env.STREAM_SECRET || env.SESSION_SECRET || STREAM_SECRET_FALLBACK;
+  const s = env.STREAM_SECRET || env.SESSION_SECRET;
+  if (!s) throw new Error("STREAM_SECRET / SESSION_SECRET not configured");
+  return s;
 }
 
 function streamSignBase(itemId, s, e, d, exp, u) {
@@ -280,7 +282,7 @@ async function tmdbSearch(env, title, type) {
   const kind = type === "series" ? "tv" : "movie";
   const qs = new URLSearchParams();
   qs.set("query", title);
-  qs.set("include_adult", "true");
+  qs.set("include_adult", type === "adult" ? "true" : "false");
   qs.set("language", "en-US");
   qs.set("page", "1");
   if (!isBearer) qs.set("api_key", key);
@@ -776,6 +778,21 @@ function logoMark() {
 function brandLogo() {
   return `<a class="brand" href="/">${logoMark()}<span class="wordmark"><span class="t1">CM FLIX</span><span class="t2">STREAM&nbsp;HUB</span></span></a>`;
 }
+/* ══════════════════════════════════════════════════
+   SECURE HTML RESPONSE HELPER
+   ══════════════════════════════════════════════════ */
+function htmlResponse(body, extraHeaders = {}, status = 200) {
+  const headers = {
+    "content-type": "text/html; charset=utf-8",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
+    ...extraHeaders,
+  };
+  return new Response(body, { status, headers });
+}
+
 
 // Plyr CDN (modern player)
 const PLYR_CSS_CDN = "https://cdn.plyr.io/3.7.8/plyr.css";
@@ -1841,6 +1858,7 @@ export async function onRequest(context) {
       link: "/watch/" + i.id,
     }));
     return new Response(homePage(slides, sections, user), { headers: { "content-type": "text/html; charset=utf-8" } });
+
   }
 
   // ───────────── CATEGORY GRID ─────────────
@@ -1876,8 +1894,8 @@ export async function onRequest(context) {
     const slice = all.slice((page - 1) * ITEMS_PER_PAGE, page * ITEMS_PER_PAGE);
     return new Response(
       gridPage(`🔍 "${q}"`, "", slice, page, totalPages, total, (p) => `/search?q=${encodeURIComponent(q)}&page=${p}`, q, user),
-      { headers: { "content-type": "text/html; charset=utf-8" } }
-    );
+          return new Response(homePage(slides, sections, user), { headers: { "content-type": "text/html; charset=utf-8" } });
+
   }
 
   // ───────────── WATCH ─────────────
@@ -1892,7 +1910,8 @@ export async function onRequest(context) {
     const user = await getCurrentUser(request, env);
     const gated = !user || isExpired(user);
     const streams = await buildStreams(env, item, gated, user);
-    return new Response(watchPage(item, user, gated, streams), { headers: { "content-type": "text/html; charset=utf-8" } });
+    return new Response(watchPage(item, user, gated, streams),     return new Response(homePage(slides, sections, user), { headers: { "content-type": "text/html; charset=utf-8" } });
+
   }
 
   // ───────────── STREAM (signed) — Worker PROXY + EDGE CACHE ─────────────
@@ -2049,6 +2068,13 @@ export async function onRequest(context) {
         return new Response(keyLoginPage(csrfToken, "Key ထည့်ပါ။", "", safeNext), { headers: { "content-type": "text/html; charset=utf-8" }, status: 400 });
       }
       if (env.ADMIN_KEY && safeEqual(rawKey, normalizeKey(env.ADMIN_KEY))) {
+        // admin login အတွက် သီးသန့် rate limit (IP per 30 min ၅ ခါသာ)
+        const adminRl = await rateLimitHit(env, `adminlogin:${clientIp}`, 5, 1800);
+        if (adminRl.blocked) {
+          return new Response(keyLoginPage(csrfToken, "Admin login ကြိုးစားခြင်း များနေပါပြီ။ ၃၀ မိနစ်နောက်မှ ထပ်ကြိုးစားပါ။", "", safeNext), {
+            headers: { "content-type": "text/html; charset=utf-8" }, status: 429,
+          });
+        }
         const deviceShort = (await deviceIdFrom(request, clientUuid)).slice(0, 12);
         const sid = randomToken(8);
         const token = await createSessionToken("__ADMIN__", deviceShort, env.SESSION_SECRET, sid);
@@ -2087,7 +2113,8 @@ export async function onRequest(context) {
     const cur = await getCurrentUser(request, env);
     if (!cur) return Response.redirect(new URL("/login", url).toString(), 302);
     if (cur.isAdmin) return Response.redirect(new URL("/admin", url).toString(), 302);
-    return new Response(accountPage(cur), { headers: { "content-type": "text/html; charset=utf-8" } });
+    return new Response(accountPage(cur),     return new Response(homePage(slides, sections, user), { headers: { "content-type": "text/html; charset=utf-8" } });
+
   }
 
   // ───────────── ADMIN ─────────────
@@ -2213,17 +2240,21 @@ export async function onRequest(context) {
       const poster = String(form.poster || "").trim().slice(0, 600);
       const slide_image = String(form.slide_image || "").trim().slice(0, 600);
       const note = String(form.note || "").trim().slice(0, 5000);
-      if (!title) return new Response(adminEditPage(existing, csrfToken, "Title ဖြည့်ပါ။"), { headers: { "content-type": "text/html; charset=utf-8" } });
-      if (slide_image && !isHttpUrl(slide_image)) return new Response(adminEditPage({ ...existing, type, title, poster, slide_image, note }, csrfToken, "Slide banner link မှားနေပါတယ်။"), { headers: { "content-type": "text/html; charset=utf-8" } });
+      if (!title) return new Response(adminEditPage(existing, csrfToken, "Title ဖြည့်ပါ။"),     return new Response(homePage(slides, sections, user), { headers: { "content-type": "text/html; charset=utf-8" } });
+
+      if (slide_image && !isHttpUrl(slide_image)) return new Response(adminEditPage({ ...existing, type, title, poster, slide_image, note }, csrfToken, "Slide banner link မှားနေပါတယ်။"),     return new Response(homePage(slides, sections, user), { headers: { "content-type": "text/html; charset=utf-8" } });
+
       const data = { id, type, title, poster, slide_image, note, created_at: existing.created_at || Date.now() };
       if (type === "series") {
         const r = sanitizeSeasons(form.seasons_json || "");
-        if (!r.ok) return new Response(adminEditPage({ ...existing, type, title, poster, slide_image, note }, csrfToken, r.err), { headers: { "content-type": "text/html; charset=utf-8" } });
+        if (!r.ok) return new Response(adminEditPage({ ...existing, type, title, poster, slide_image, note }, csrfToken, r.err),     return new Response(homePage(slides, sections, user), { headers: { "content-type": "text/html; charset=utf-8" } });
+
         data.seasons = r.seasons;
       } else {
         const video_url = String(form.video_url || "").trim().slice(0, 1000);
         const download_url = String(form.download_url || "").trim().slice(0, 1000);
-        if (!isHttpUrl(video_url)) return new Response(adminEditPage({ ...existing, type, title, poster, slide_image, note }, csrfToken, "Video URL ဖြည့်ပါ။"), { headers: { "content-type": "text/html; charset=utf-8" } });
+        if (!isHttpUrl(video_url)) return new Response(adminEditPage({ ...existing, type, title, poster, slide_image, note }, csrfToken, "Video URL ဖြည့်ပါ။"),     return new Response(homePage(slides, sections, user), { headers: { "content-type": "text/html; charset=utf-8" } });
+
         data.video_url = video_url;
         data.download_url = download_url || video_url;
       }
