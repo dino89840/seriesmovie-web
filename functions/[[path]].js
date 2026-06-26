@@ -1067,14 +1067,18 @@ function watchPage(item, user, gated, streams) {
     .meta-title{font-size:25px;font-weight:900;margin:0 0 8px}
     .meta-cat{display:inline-block;font-size:11px;font-weight:800;padding:4px 11px;border-radius:7px;background:#131b2e;margin-bottom:12px;letter-spacing:.4px}
     .meta-note{color:#cfd6e8;font-size:14px;line-height:1.75;margin:0 0 18px;white-space:pre-wrap}
-    .actions{display:flex;gap:12px;flex-wrap:nowrap;margin:18px 0 6px;width:100%}
-    .actions a,.actions button{flex:1 1 50%;min-width:0;text-align:center;padding:15px 18px;border-radius:10px;border:0;cursor:pointer;font-weight:700;font-size:15.5px;text-decoration:none;font-family:inherit;display:inline-flex;align-items:center;justify-content:center;gap:9px;transition:.18s;letter-spacing:.3px}
-    .btn-play{background:#fff;color:#111;box-shadow:0 4px 14px rgba(255,255,255,.12)}
-    .btn-play:hover{background:var(--acc);color:#fff;transform:translateY(-2px)}
-    .btn-dl{background:linear-gradient(135deg,var(--acc),var(--acc2));color:#fff;box-shadow:0 4px 14px rgba(229,9,20,.35); -webkit-touch-callout: none; user-select: none;}
-    .btn-dl:hover{filter:brightness(1.1);transform:translateY(-2px)}
-    @media(max-width:480px){.actions a,.actions button{padding:14px 10px;font-size:14.5px;gap:6px}}
-    .gate{background:#2a1420;border:1px solid #6a2030;color:#ffd;padding:12px 14px;border-radius:11px;margin:14px 0;font-size:14px;line-height:1.6}
+.actions{display:flex;flex-direction:column;gap:10px;margin:18px 0 6px;width:100%}
+    .actions a,.actions button{width:100%;text-align:center;padding:15px 18px;border-radius:10px;border:0;cursor:pointer;font-weight:700;font-size:16px;text-decoration:none;font-family:inherit;display:inline-flex;align-items:center;justify-content:center;gap:9px;transition:.18s;letter-spacing:.3px;box-sizing:border-box}
+    
+    /* အပြာရောင် Gradient Play Button (ပုံထဲကအတိုင်း) */
+    .btn-play{background:linear-gradient(135deg,#2f57ff,#1ca0ff);color:#ffffff !important;box-shadow:0 4px 14px rgba(47,87,255,.25)}
+    .btn-play:hover{filter:brightness(1.08);transform:translateY(-1px)}
+    
+    /* မီးခိုးရောင်ပုတ်ပုတ် Download Button (ပုံထဲက Trailer button အတိုင်း) */
+    .btn-dl{background:#1f1f1f;color:#ffffff !important;border:1px solid rgba(255,255,255,0.03);box-shadow:0 4px 10px rgba(0,0,0,.35); -webkit-touch-callout: none; user-select: none;}
+    .btn-dl:hover{background:#2b2b2b;transform:translateY(-1px)}
+    
+    @media(max-width:480px){.actions a,.actions button{padding:14px 10px;font-size:15px;gap:7px}}    .gate{background:#2a1420;border:1px solid #6a2030;color:#ffd;padding:12px 14px;border-radius:11px;margin:14px 0;font-size:14px;line-height:1.6}
     .gate a{color:var(--acc2);font-weight:800}
     .now-playing{margin-top:12px;color:var(--acc2);font-weight:700;font-size:14px;min-height:18px}
     .seasons{margin-top:22px}
