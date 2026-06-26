@@ -1035,16 +1035,21 @@ function watchPage(item, user, gated, streams) {
       </div>`;
     playerArea = `
       <div class="player-box">
-        <video id="cmPlayer" playsinline controls crossorigin poster="${posterImg}"></video>
-        <div class="player-empty" id="playerEmpty">▶ အပိုင်းတစ်ခုကို ရွေးပါ</div>
+        <video id="cmPlayer" playsinline crossorigin preload="none" poster="${posterImg}"></video>
+        <div class="poster-cover" id="posterCover" style="background-image:url('${posterImg}')">
+          <div class="poster-cover-play"><span>▶</span></div>
+        </div>
       </div>
       <div class="now-playing" id="nowPlaying"></div>`;
   } else {
     const st = streams.single || { video: "", dl: "" };
     playerArea = `
       <div class="player-box">
-        <video id="cmPlayer" playsinline controls crossorigin poster="${posterImg}"
+        <video id="cmPlayer" playsinline crossorigin preload="none" poster="${posterImg}"
           data-video="${htmlEscape(st.video || "")}" data-dl="${htmlEscape(st.dl || "")}"></video>
+        <div class="poster-cover" id="posterCover" style="background-image:url('${posterImg}')">
+          <div class="poster-cover-play"><span>▶</span></div>
+        </div>
       </div>`;
   }
 
@@ -1062,8 +1067,12 @@ function watchPage(item, user, gated, streams) {
     .player-box{position:relative;background:#000;border-radius:16px;overflow:hidden;aspect-ratio:16/9;box-shadow:0 14px 40px rgba(0,0,0,.65)}
     .player-box .plyr{height:100%;border-radius:16px}
     .player-box video{width:100%;height:100%;background:#000;object-fit:contain;display:block}
-    .player-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--mut);font-size:15px;font-weight:600;background:#080c18;z-index:5}
-    .player-empty.hide{display:none}
+    .poster-cover{position:absolute;inset:0;z-index:10;cursor:pointer;background-size:cover;background-position:center center;background-repeat:no-repeat;background-color:#080c18;display:flex;align-items:center;justify-content:center;transition:opacity .25s}
+    .poster-cover::after{content:"";position:absolute;inset:0;background:linear-gradient(0deg,rgba(0,0,0,.45),rgba(0,0,0,.1) 60%,rgba(0,0,0,.25))}
+    .poster-cover.hide{display:none}
+    .poster-cover-play{position:relative;z-index:2;width:68px;height:68px;border-radius:50%;background:rgba(229,9,20,.92);display:flex;align-items:center;justify-content:center;box-shadow:0 8px 28px rgba(229,9,20,.55);transition:transform .18s,background .18s}
+    .poster-cover-play span{color:#fff;font-size:26px;margin-left:4px}
+    .poster-cover:hover .poster-cover-play{transform:scale(1.08);background:var(--acc)}
     .meta-title{font-size:25px;font-weight:900;margin:0 0 8px}
     .meta-cat{display:inline-block;font-size:11px;font-weight:800;padding:4px 11px;border-radius:7px;background:#131b2e;margin-bottom:12px;letter-spacing:.4px}
     .meta-note{color:#cfd6e8;font-size:14px;line-height:1.75;margin:0 0 18px;white-space:pre-wrap}
@@ -1160,40 +1169,62 @@ ${footer()}`;
   var nowEl=document.getElementById('nowPlaying');
   var cur={video:'',dl:'',title:''};
 
+  var coverEl=document.getElementById('posterCover');
   var player=null;
-  try{
-    player=new Plyr(v,{
-      controls:['play-large','play','progress','current-time','duration','mute','volume','settings','pip','airplay','fullscreen'],
-      settings:['quality','speed','loop'],
-      speed:{selected:1,options:[0.5,0.75,1,1.25,1.5,2]},
-      ratio:'16:9',
-      keyboard:{focused:true,global:true},
-      tooltips:{controls:true,seek:true}
-    });
-  }catch(_){}
-  if (player) {
-    player.on('enterfullscreen', function() {
-      if (screen.orientation && screen.orientation.lock) {
-        screen.orientation.lock('landscape').catch(function() {});
+  var playerReady=false;
+
+  function initPlayer(){
+    if(player || playerReady) return;
+    playerReady=true;
+    // play နှိပ်မှသာ controls ပါတဲ့ Plyr ကို ဆောက်မယ်
+    v.setAttribute('controls','controls');
+    try{
+      player=new Plyr(v,{
+        controls:['play-large','play','progress','current-time','duration','mute','volume','settings','pip','airplay','fullscreen'],
+        settings:['quality','speed','loop'],
+        speed:{selected:1,options:[0.5,0.75,1,1.25,1.5,2]},
+        ratio:'16:9',
+        keyboard:{focused:true,global:true},
+        tooltips:{controls:true,seek:true}
+      });
+    }catch(_){}
+    if (player) {
+      player.on('enterfullscreen', function() {
+        if (screen.orientation && screen.orientation.lock) {
+          screen.orientation.lock('landscape').catch(function() {});
+        }
+      });
+      player.on('exitfullscreen', function() {
+        if (screen.orientation && screen.orientation.unlock) {
+          screen.orientation.unlock();
+        }
+      });
+      if(GATED){
+        player.on('play',function(){ player.pause(); gateMsg(); });
       }
-    });
-    player.on('exitfullscreen', function() {
-      if (screen.orientation && screen.orientation.unlock) {
-        screen.orientation.unlock();
-      }
-    });
+    }
   }
+
+  function revealPlayer(){
+    if(coverEl) coverEl.classList.add('hide');
+    initPlayer();
+  }
+
   function gateMsg(){
     var loginUrl='/login?next='+encodeURIComponent(location.pathname+location.search);
     location.href = ${loggedIn ? "'/account'" : "loginUrl"};
   }
 
+  function applySource(video){
+    if(!video) return;
+    if(player){ player.source={type:'video',sources:[{src:video,type:'video/mp4'}]}; }
+    else if(v){ v.src=video; }
+  }
+
   function setSource(video, dl, title){
     cur.video=video||''; cur.dl=dl||video||''; cur.title=title||'';
-    if(emptyEl) emptyEl.classList.add('hide');
-    if(player){ player.source={type:'video',sources:[{src:cur.video,type:'video/mp4'}]}; }
-    else if(v){ v.src=cur.video; }
-    
+    revealPlayer();
+    applySource(cur.video);
     if(nowEl && title){ nowEl.textContent='▶ Now playing: '+title; }
   }
 
@@ -1201,9 +1232,7 @@ ${footer()}`;
   (function(){
     var dv=v.getAttribute('data-video')||''; var dd=v.getAttribute('data-dl')||dv;
     cur.video=dv; cur.dl=dd;
-    
-    if(dv && player){ player.source={type:'video',sources:[{src:dv,type:'video/mp4'}]}; }
-    else if(dv && v){ v.src=dv; }
+    // source ကို play နှိပ်မှသာ load မယ် (preload မလုပ်ဘူး)
   })();` : ``}
 
   function tryPlay(){
@@ -1211,11 +1240,24 @@ ${footer()}`;
     else if(v){ var q=v.play(); if(q&&q.catch) q.catch(function(){}); }
   }
 
+  // thumbnail cover ကို နှိပ်ရင် play (Viki ပုံစံ)
+  if(coverEl){
+    coverEl.addEventListener('click',function(){
+      if(GATED){ gateMsg(); return; }
+      if(!cur.video){ alert('အပိုင်း / link မရှိသေးပါ'); return; }
+      revealPlayer();
+      applySource(cur.video);
+      setTimeout(tryPlay,120);
+    });
+  }
+
   if(btnPlay){
     btnPlay.addEventListener('click',function(){
       if(GATED){ gateMsg(); return; }
       if(!cur.video){ alert('အပိုင်း / link မရှိသေးပါ'); return; }
-      tryPlay();
+      revealPlayer();
+      applySource(cur.video);
+      setTimeout(tryPlay,120);
       document.querySelector('.player-box').scrollIntoView({behavior:'smooth',block:'center'});
     });
   }
@@ -1229,9 +1271,7 @@ ${footer()}`;
       window.location.href = cur.dl;
     });
   }
-  if(GATED && player){
-    player.on('play',function(){ player.pause(); gateMsg(); });
-  } else if(GATED && v){
+  if(GATED && v){
     v.addEventListener('play',function(){ v.pause(); gateMsg(); });
   }
 
