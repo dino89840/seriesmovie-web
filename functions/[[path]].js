@@ -715,7 +715,7 @@ const CMFLIX_CSS = `
   }
 
   /* Hero slider */
-  .hero{position:relative;margin:16px 0 6px;border-radius:20px;overflow:hidden;border:1px solid var(--line);box-shadow:0 22px 60px rgba(0,0,0,.6)}
+  .hero{position:relative;margin:16px 0 6px;border-radius:0;overflow:hidden;box-shadow:0 22px 60px rgba(0,0,0,.6)}
   .hero-track{display:flex;transition:transform .6s cubic-bezier(.45,.05,.2,1)}
   .slide{position:relative;min-width:100%;height:360px;display:flex;align-items:flex-end;overflow:hidden;background:#080c18}
   .slide-bg{position:absolute;inset:0;background-size:cover;background-position:center;background-repeat:no-repeat;transform:scale(1.04)}
@@ -952,8 +952,8 @@ function homePage(slides, sections, user) {
 
   const body = `
 ${topBar("", "", user)}
+${heroHtml}
 <div class="wrap">
-  ${heroHtml}
   ${sectionsHtml}
 </div>
 ${footer()}`;
@@ -1064,15 +1064,12 @@ function watchPage(item, user, gated, streams) {
     :root{--plyr-color-main:var(--acc2);--plyr-video-control-color:#fff;--plyr-video-background:#000;--plyr-menu-background:#0d1424;--plyr-menu-color:#eef2ff;--plyr-control-radius:8px}
     .watch{display:grid;grid-template-columns:1fr;gap:22px;margin:18px 0}
     @media(min-width:900px){ .watch.has-info{grid-template-columns:1fr 330px} }
-    .player-box{position:relative;background:#000;border-radius:16px;overflow:hidden;aspect-ratio:16/9;box-shadow:0 14px 40px rgba(0,0,0,.65)}
-    .player-box .plyr{height:100%;border-radius:16px}
+    .player-box{position:relative;background:#000;border-radius:0;overflow:hidden;aspect-ratio:16/9;box-shadow:0 14px 40px rgba(0,0,0,.65)}
+    .player-box .plyr{height:100%;border-radius:0}
     .player-box video{width:100%;height:100%;background:#000;object-fit:contain;display:block}
     .poster-cover{position:absolute;inset:0;z-index:10;cursor:pointer;background-size:cover;background-position:center center;background-repeat:no-repeat;background-color:#080c18;display:flex;align-items:center;justify-content:center;transition:opacity .25s}
-    .poster-cover::after{content:"";position:absolute;inset:0;background:linear-gradient(0deg,rgba(0,0,0,.45),rgba(0,0,0,.1) 60%,rgba(0,0,0,.25))}
     .poster-cover.hide{display:none}
-    .poster-cover-play{position:relative;z-index:2;width:68px;height:68px;border-radius:50%;background:rgba(229,9,20,.92);display:flex;align-items:center;justify-content:center;box-shadow:0 8px 28px rgba(229,9,20,.55);transition:transform .18s,background .18s}
-    .poster-cover-play span{color:#fff;font-size:26px;margin-left:4px}
-    .poster-cover:hover .poster-cover-play{transform:scale(1.08);background:var(--acc)}
+    .poster-cover-play{display:none}
     .meta-title{font-size:25px;font-weight:900;margin:0 0 8px}
     .meta-cat{display:inline-block;font-size:11px;font-weight:800;padding:4px 11px;border-radius:7px;background:#131b2e;margin-bottom:12px;letter-spacing:.4px}
     .meta-note{color:#cfd6e8;font-size:14px;line-height:1.75;margin:0 0 18px;white-space:pre-wrap}
