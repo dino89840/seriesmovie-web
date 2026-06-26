@@ -1895,7 +1895,7 @@ export async function onRequest(context) {
     return new Response(watchPage(item, user, gated, streams), { headers: { "content-type": "text/html; charset=utf-8" } });
   }
 
-  // ───────────── STREAM (signed) — Worker PROXY ─────────────
+  // ───────────── STREAM (signed) — Worker PROXY + EDGE CACHE ─────────────
   if (path.startsWith("/stream/") && method === "GET") {
     const id = decodeURIComponent(path.slice("/stream/".length).split("/")[0]);
     const item = await getItem(env, id);
@@ -1920,6 +1920,26 @@ export async function onRequest(context) {
     if (!isHttpUrl(real)) return new Response("No source", { status: 404 });
 
     const rangeHeader = request.headers.get("Range");
+
+    // ── EDGE CACHE: download မဟုတ်တဲ့ stream chunk တွေကိုသာ cache လုပ်မယ် ──
+    // cache key က real-url + range ပေါ်မူတည်တယ် (signed/session token မပါ → cache hit များတယ်)
+    const cache = caches.default;
+    let cacheKey = null;
+    const cacheable = v.d !== 1; // download ကို cache မလုပ်ဘူး
+    if (cacheable) {
+      const ckUrl = new URL(request.url);
+      ckUrl.search = ""; // signed params တွေ ဖယ်
+      ckUrl.searchParams.set("rk", real);                       // real source key
+      ckUrl.searchParams.set("rg", rangeHeader || "full");      // range key
+      cacheKey = new Request(ckUrl.toString(), { method: "GET" });
+      const cached = await cache.match(cacheKey);
+      if (cached) {
+        const h = new Headers(cached.headers);
+        h.set("X-CMFlix-Cache", "HIT");
+        return new Response(cached.body, { status: cached.status, headers: h });
+      }
+    }
+
     const fwdHeaders = new Headers();
     if (rangeHeader) fwdHeaders.set("Range", rangeHeader);
     const ifRange = request.headers.get("If-Range");
@@ -1950,7 +1970,6 @@ export async function onRequest(context) {
 
     if (!outHeaders.has("Content-Type")) outHeaders.set("Content-Type", "video/mp4");
     if (!outHeaders.has("Accept-Ranges")) outHeaders.set("Accept-Ranges", "bytes");
-    outHeaders.set("Cache-Control", "private, no-store");
     outHeaders.set("X-Content-Type-Options", "nosniff");
 
     if (v.d === 1) {
@@ -1967,12 +1986,27 @@ export async function onRequest(context) {
         const ext = real.split("?")[0].split(".").pop();
         const fname = /^[a-z0-9]{2,5}$/i.test(ext) ? `${safeName}.${ext}` : `${safeName}.mp4`;
         outHeaders.set("Content-Disposition", `attachment; filename="${fname}"`);
-      } else {
-        outHeaders.set("Content-Disposition", "inline");
-      }
+        outHeaders.set("Cache-Control", "private, no-store"); // download ကို cache မလုပ်
+        return new Response(originResp.body, { status: originResp.status, headers: outHeaders });
+    }
+
+    // ── stream (download မဟုတ်) → edge cache မှာ သိမ်းမယ် ──
+    outHeaders.set("Content-Disposition", "inline");
+    outHeaders.set("Cache-Control", "public, max-age=86400"); // edge မှာ ၁ ရက် cache
+    outHeaders.set("X-CMFlix-Cache", "MISS");
+
+    if (cacheable && cacheKey && (originResp.status === 200 || originResp.status === 206)) {
+      // response body ကို နှစ်ခွဲ — တစ်ခု client ကို၊ တစ်ခု cache ကို
+      const respForCache = new Response(originResp.body, { status: originResp.status, headers: outHeaders });
+      const respForClient = respForCache.clone();
+      // cache write ကို နောက်ကွယ်မှာ လုပ်စေမယ် (client ကို မစောင့်စေဘူး)
+      context.waitUntil(cache.put(cacheKey, respForCache));
+      return respForClient;
+    }
 
     return new Response(originResp.body, { status: originResp.status, headers: outHeaders });
   }
+
 
   // ───────────── AUTH STATUS ─────────────
   if (path === "/auth/status" && method === "GET") {
