@@ -771,8 +771,14 @@ const CMFLIX_CSS = `
   .footer b{color:var(--acc)}
 `;
 
-// SVG play-mark monogram logo
+// Custom image logo
+const LOGO_URL = "YOUR_LOGO_URL_HERE";  // ⬅️ ဒီနေရာမှာ သင့်ကြိုက်တဲ့ logo image link ထည့်ပါ
+
 function logoMark() {
+  if (LOGO_URL && /^https?:\/\//i.test(LOGO_URL)) {
+    return `<span class="mark"><img src="${LOGO_URL}" alt="CM FLIX" style="width:100%;height:100%;object-fit:cover;border-radius:inherit"></span>`;
+  }
+  // fallback — image link မထည့်ရင် မူရင်း SVG ကိုပဲ သုံးမယ်
   return `<span class="mark"><svg viewBox="0 0 24 24" fill="none"><path d="M8 5.5v13a1 1 0 0 0 1.54.84l9.5-6.5a1 1 0 0 0 0-1.68l-9.5-6.5A1 1 0 0 0 8 5.5Z" fill="#fff"/></svg></span>`;
 }
 function brandLogo() {
@@ -1061,12 +1067,13 @@ function watchPage(item, user, gated, streams) {
     .meta-title{font-size:25px;font-weight:900;margin:0 0 8px}
     .meta-cat{display:inline-block;font-size:11px;font-weight:800;padding:4px 11px;border-radius:7px;background:#131b2e;margin-bottom:12px;letter-spacing:.4px}
     .meta-note{color:#cfd6e8;font-size:14px;line-height:1.75;margin:0 0 18px;white-space:pre-wrap}
-    .actions{display:flex;gap:12px;flex-wrap:wrap;margin:16px 0 4px}
-    .actions a,.actions button{flex:1 1 170px;max-width:280px;text-align:center;padding:13px 18px;border-radius:11px;border:0;cursor:pointer;font-weight:800;font-size:15px;text-decoration:none;font-family:inherit;display:inline-flex;align-items:center;justify-content:center;gap:8px;transition:.15s}
-    .btn-play{background:#fff;color:#111}
-    .btn-play:hover{background:var(--acc);color:#fff}
-    .btn-dl{background:linear-gradient(135deg,var(--acc),var(--acc2));color:#fff; -webkit-touch-callout: none; user-select: none;}
-.btn-dl:hover{filter:brightness(1.1)}
+    .actions{display:flex;gap:12px;flex-wrap:nowrap;margin:18px 0 6px;width:100%}
+    .actions a,.actions button{flex:1 1 50%;min-width:0;text-align:center;padding:15px 18px;border-radius:10px;border:0;cursor:pointer;font-weight:700;font-size:15.5px;text-decoration:none;font-family:inherit;display:inline-flex;align-items:center;justify-content:center;gap:9px;transition:.18s;letter-spacing:.3px}
+    .btn-play{background:#fff;color:#111;box-shadow:0 4px 14px rgba(255,255,255,.12)}
+    .btn-play:hover{background:var(--acc);color:#fff;transform:translateY(-2px)}
+    .btn-dl{background:linear-gradient(135deg,var(--acc),var(--acc2));color:#fff;box-shadow:0 4px 14px rgba(229,9,20,.35); -webkit-touch-callout: none; user-select: none;}
+    .btn-dl:hover{filter:brightness(1.1);transform:translateY(-2px)}
+    @media(max-width:480px){.actions a,.actions button{padding:14px 10px;font-size:14.5px;gap:6px}}
     .gate{background:#2a1420;border:1px solid #6a2030;color:#ffd;padding:12px 14px;border-radius:11px;margin:14px 0;font-size:14px;line-height:1.6}
     .gate a{color:var(--acc2);font-weight:800}
     .now-playing{margin-top:12px;color:var(--acc2);font-weight:700;font-size:14px;min-height:18px}
@@ -1312,14 +1319,18 @@ function accountPage(user, info = "", error = "") {
     return `<tr><td>${htmlEscape(d.label || "Device")}</td><td style="white-space:nowrap;font-size:11.5px">${htmlEscape(seen)}</td></tr>`;
   }).join("");
 
+  const keySvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="width:26px;height:26px"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></svg>`;
   const body = `
-<div class="auth-wrap"><div class="auth-card" style="max-width:560px">
-  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
-    <div>
-      <h1 style="margin:0;text-align:left">My Key</h1>
-      <p class="sub" style="margin:4px 0 0;text-align:left"><code style="color:var(--acc2)">${htmlEscape(user.keyId)}</code> ${roleBadge}</p>
+<div class="auth-wrap"><div class="auth-card account-card" style="max-width:560px">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px">
+    <div style="display:flex;align-items:center;gap:13px">
+      <span class="key-icon">${keySvg}</span>
+      <div>
+        <h1 style="margin:0;text-align:left;font-size:23px">My Key</h1>
+        <p class="sub" style="margin:5px 0 0;text-align:left;display:flex;align-items:center;gap:7px;flex-wrap:wrap"><code style="color:var(--acc2);font-size:13px;letter-spacing:.5px">${htmlEscape(user.keyId)}</code> ${roleBadge}</p>
+      </div>
     </div>
-    <a href="/" style="color:var(--acc2);text-decoration:none;font-weight:700;font-size:13px">← Home</a>
+    <a href="/" style="color:var(--acc2);text-decoration:none;font-weight:700;font-size:13px;white-space:nowrap">← Home</a>
   </div>
   ${info ? `<div class="ok">${htmlEscape(info)}</div>` : ""}
   ${error ? `<div class="err">${htmlEscape(error)}</div>` : ""}
@@ -1343,7 +1354,14 @@ function accountPage(user, info = "", error = "") {
   </div>
 </div></div>
 <style>th,td{padding:8px 10px;border-bottom:1px solid var(--line)}th{font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.5px}</style>`;
-  return pageShell("My Key — CM FLIX", body, { extraCss: AUTH_CSS });
+  const accountExtraCss = `
+    .account-card .key-icon{width:52px;height:52px;flex:0 0 52px;border-radius:15px;display:flex;align-items:center;justify-content:center;color:#fff;background:linear-gradient(140deg,#ff3a3f,#e50914 55%,#a3060d);box-shadow:0 6px 18px rgba(229,9,20,.45),inset 0 1px 0 rgba(255,255,255,.25)}
+    .account-card .info{background:linear-gradient(135deg,#0d2a1a,#0e1830);border:1px solid #1f5a38;border-radius:14px;padding:16px}
+    .account-card .badge-paid{background:linear-gradient(135deg,#0f9d58,#22c55e);color:#fff;box-shadow:0 2px 8px rgba(34,197,94,.4)}
+    .account-card .badge-trial{background:linear-gradient(135deg,#f59e0b,#fbbf24);color:#2a1700}
+    .account-card table thead tr{background:linear-gradient(90deg,#15192e,#1a1430)}
+  `;
+  return pageShell("My Key — CM FLIX", body, { extraCss: AUTH_CSS + accountExtraCss });
 }
 
 /* ══════════════════════════════════════════════════
