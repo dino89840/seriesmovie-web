@@ -1894,8 +1894,8 @@ export async function onRequest(context) {
     const slice = all.slice((page - 1) * ITEMS_PER_PAGE, page * ITEMS_PER_PAGE);
     return new Response(
       gridPage(`🔍 "${q}"`, "", slice, page, totalPages, total, (p) => `/search?q=${encodeURIComponent(q)}&page=${p}`, q, user),
-          return new Response(homePage(slides, sections, user), { headers: { "content-type": "text/html; charset=utf-8" } });
-
+      { headers: { "content-type": "text/html; charset=utf-8" } }
+    );
   }
 
   // ───────────── WATCH ─────────────
@@ -1910,8 +1910,9 @@ export async function onRequest(context) {
     const user = await getCurrentUser(request, env);
     const gated = !user || isExpired(user);
     const streams = await buildStreams(env, item, gated, user);
-    return new Response(watchPage(item, user, gated, streams),     return new Response(homePage(slides, sections, user), { headers: { "content-type": "text/html; charset=utf-8" } });
-
+    return new Response(watchPage(item, user, gated, streams),
+      { headers: { "content-type": "text/html; charset=utf-8" } }
+    );
   }
 
   // ───────────── STREAM (signed) — Worker PROXY + EDGE CACHE ─────────────
@@ -2113,8 +2114,9 @@ export async function onRequest(context) {
     const cur = await getCurrentUser(request, env);
     if (!cur) return Response.redirect(new URL("/login", url).toString(), 302);
     if (cur.isAdmin) return Response.redirect(new URL("/admin", url).toString(), 302);
-    return new Response(accountPage(cur),     return new Response(homePage(slides, sections, user), { headers: { "content-type": "text/html; charset=utf-8" } });
-
+    return new Response(accountPage(cur),
+      { headers: { "content-type": "text/html; charset=utf-8" } }
+    );
   }
 
   // ───────────── ADMIN ─────────────
@@ -2240,20 +2242,28 @@ export async function onRequest(context) {
       const poster = String(form.poster || "").trim().slice(0, 600);
       const slide_image = String(form.slide_image || "").trim().slice(0, 600);
       const note = String(form.note || "").trim().slice(0, 5000);
-      if (!title) return new Response(adminEditPage(existing, csrfToken, "Title ဖြည့်ပါ။"),     return new Response(homePage(slides, sections, user), { headers: { "content-type": "text/html; charset=utf-8" } });
+      if (!title) return new Response(adminEditPage(existing, csrfToken, "Title ဖြည့်ပါ။"),
+        { headers: { "content-type": "text/html; charset=utf-8" } });
 
-      if (slide_image && !isHttpUrl(slide_image)) return new Response(adminEditPage({ ...existing, type, title, poster, slide_image, note }, csrfToken, "Slide banner link မှားနေပါတယ်။"),     return new Response(homePage(slides, sections, user), { headers: { "content-type": "text/html; charset=utf-8" } });
+      if (poster && !isHttpUrl(poster)) return new Response(adminEditPage({ ...existing, type, title, poster, slide_image, note }, csrfToken, "Poster link မှားနေပါတယ်။"),
+        { headers: { "content-type": "text/html; charset=utf-8" } });
+
+      if (slide_image && !isHttpUrl(slide_image)) return new Response(adminEditPage({ ...existing, type, title, poster, slide_image, note }, csrfToken, "Slide banner link မှားနေပါတယ်။"),
+        { headers: { "content-type": "text/html; charset=utf-8" } });
+
 
       const data = { id, type, title, poster, slide_image, note, created_at: existing.created_at || Date.now() };
       if (type === "series") {
         const r = sanitizeSeasons(form.seasons_json || "");
-        if (!r.ok) return new Response(adminEditPage({ ...existing, type, title, poster, slide_image, note }, csrfToken, r.err),     return new Response(homePage(slides, sections, user), { headers: { "content-type": "text/html; charset=utf-8" } });
+        if (!r.ok) return new Response(adminEditPage({ ...existing, type, title, poster, slide_image, note }, csrfToken, r.err),
+          { headers: { "content-type": "text/html; charset=utf-8" } });
 
         data.seasons = r.seasons;
       } else {
         const video_url = String(form.video_url || "").trim().slice(0, 1000);
         const download_url = String(form.download_url || "").trim().slice(0, 1000);
-        if (!isHttpUrl(video_url)) return new Response(adminEditPage({ ...existing, type, title, poster, slide_image, note }, csrfToken, "Video URL ဖြည့်ပါ။"),     return new Response(homePage(slides, sections, user), { headers: { "content-type": "text/html; charset=utf-8" } });
+        if (!isHttpUrl(video_url)) return new Response(adminEditPage({ ...existing, type, title, poster, slide_image, note }, csrfToken, "Video URL ဖြည့်ပါ။"),
+          { headers: { "content-type": "text/html; charset=utf-8" } });
 
         data.video_url = video_url;
         data.download_url = download_url || video_url;
