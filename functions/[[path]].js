@@ -772,7 +772,7 @@ const CMFLIX_CSS = `
 `;
 
 // Custom image logo
-const LOGO_URL = "YOUR_LOGO_URL_HERE";  // ⬅️ ဒီနေရာမှာ သင့်ကြိုက်တဲ့ logo image link ထည့်ပါ
+const LOGO_URL = "https://cloudfare-img.darkvpn.giize.com/files/1782459415088_34ee1132-a7ff-4d0c-8f2c-b77082804fa9.png";  // ⬅️ ဒီနေရာမှာ သင့်ကြိုက်တဲ့ logo image link ထည့်ပါ
 
 function logoMark() {
   if (LOGO_URL && /^https?:\/\//i.test(LOGO_URL)) {
