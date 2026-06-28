@@ -40,8 +40,9 @@ const CATEGORIES = {
   movie:  { id: "movie",  name: "Movies",  icon: "" },
   series: { id: "series", name: "Series",  icon: "" },
   adult:  { id: "adult",  name: "21+",     icon: "" },
+  random: { id: "random", name: "Random Best", icon: "" },
 };
-function isValidCategory(c) { return c === "movie" || c === "series" || c === "adult"; }
+function isValidCategory(c) { return c === "movie" || c === "series" || c === "adult" || c === "random"; }
 
 // ── Per-request cache ──
 const _reqCache = new WeakMap();
@@ -566,6 +567,9 @@ function getSvgIcon(type, size = 16) {
   if (type === "adult") {
     return `<svg style="${style}" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16h.01"/><path d="M12 8v5"/></svg>`;
   }
+  if (type === "random") {
+    return `<svg style="${style}" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`;
+  }
   return "";
 }
 /* ══════════════════════════════════════════════════
@@ -769,6 +773,24 @@ const CMFLIX_CSS = `
   .empty{grid-column:1/-1;text-align:center;color:var(--mut);padding:54px 16px;font-size:14px}
   .footer{text-align:center;color:var(--mut);font-size:12px;padding:36px 16px 28px;border-top:1px solid var(--line);margin-top:32px}
   .footer b{color:var(--acc)}
+
+  /* ── Random Best: 2-up cover layout (Viki style) ── */
+  .cover-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
+  @media(min-width:820px){.cover-grid{grid-template-columns:repeat(3,1fr);gap:18px}}
+  .cover-item{display:block;text-decoration:none;border-radius:14px;overflow:hidden;background:var(--card);
+    border:1px solid var(--line);transition:transform .18s,border-color .18s,box-shadow .18s;position:relative}
+  .cover-item:hover{transform:translateY(-5px);border-color:var(--acc2);box-shadow:0 14px 32px rgba(0,0,0,.55)}
+  .cover-img{width:100%;aspect-ratio:16/9;background-size:cover;background-position:center center;background-repeat:no-repeat;
+    background-color:#0a1120;display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden}
+  .cover-img .noimg{font-size:40px;opacity:.3}
+  .cover-img .play-ov{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;opacity:0;transition:.2s;background:linear-gradient(0deg,rgba(0,0,0,.55),rgba(0,0,0,.15))}
+  .cover-item:hover .cover-img .play-ov{opacity:1}
+  .cover-img .play-ov span{width:54px;height:54px;border-radius:50%;background:var(--acc);display:flex;align-items:center;justify-content:center;font-size:20px;box-shadow:0 6px 18px rgba(229,9,20,.6)}
+  .cover-tag{position:absolute;top:10px;left:10px;z-index:2;display:inline-flex;align-items:center;gap:5px;
+    background:rgba(0,0,0,.62);backdrop-filter:blur(6px);color:#fff;font-size:11px;font-weight:800;padding:5px 10px;border-radius:7px;letter-spacing:.4px}
+  .cover-title{padding:11px 13px 13px;font-size:14px;font-weight:700;line-height:1.4;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;color:#e7ecf8}
+  @media(max-width:560px){.cover-title{font-size:12.5px;padding:9px 10px 11px}.cover-tag{font-size:10px;padding:4px 8px}}
 `;
 
 // Custom image logo
@@ -872,6 +894,7 @@ function topBar(activeCat = "", query = "", user = null) {
     <a class="${activeCat === "movie" ? "on" : ""}" href="/category/movie">${getSvgIcon("movie")} Movies</a>
     <a class="${activeCat === "series" ? "on" : ""}" href="/category/series">${getSvgIcon("series")} Series</a>
     <a class="${activeCat === "adult" ? "on" : ""}" href="/category/adult">${getSvgIcon("adult")} 21+</a>
+    <a class="${activeCat === "random" ? "on" : ""}" href="/category/random">${getSvgIcon("random")} Random Best</a>
   </nav>
 </div>`;
 }
@@ -888,6 +911,20 @@ function cardHtml(it) {
       <div class="play-ov"><span>▶</span></div>
     </div>
     <div class="c-title">${htmlEscape(it.title || "Untitled")}</div>
+  </a>`;
+}
+
+// ── Cover card (2-up Viki style) — uses slide_image (landscape) first ──
+function coverCardHtml(it) {
+  const img = it.slide_image || it.poster || "";
+  return `
+  <a class="cover-item" href="/watch/${htmlEscape(it.id)}">
+    <div class="cover-img" style="background-image:url('${htmlEscape(img)}')">
+      <span class="cover-tag">⭐ Random Best</span>
+      ${img ? "" : '<span class="noimg">🎬</span>'}
+      <div class="play-ov"><span>▶</span></div>
+    </div>
+    <div class="cover-title">${htmlEscape(it.title || "Untitled")}</div>
   </a>`;
 }
 
@@ -939,14 +976,17 @@ function homePage(slides, sections, user) {
 
   const sectionsHtml = sections.map(sec => {
     const cat = CATEGORIES[sec.type];
-    const cards = sec.items.map(cardHtml).join("");
+    const isCover = sec.type === "random";
+    const cards = isCover
+      ? sec.items.map(coverCardHtml).join("")
+      : sec.items.map(cardHtml).join("");
     return `
     <div class="section">
       <div class="section-head">
         <h2 style="display:flex;align-items:center;gap:8px">${getSvgIcon(sec.type, 20)} ${htmlEscape(cat.name)}</h2>
         <a class="seeall" href="/category/${cat.id}">See all →</a>
       </div>
-      <div class="grid">${cards || `<div class="empty">${cat.name} မရှိသေးပါ</div>`}</div>
+      <div class="${isCover ? "cover-grid" : "grid"}">${cards || `<div class="empty">${cat.name} မရှိသေးပါ</div>`}</div>
     </div>`;
   }).join("");
 
@@ -979,7 +1019,10 @@ ${footer()}`;
 }
 
 function gridPage(title, activeCat, items, page, totalPages, total, hrefFor, query = "", user = null) {
-  const cards = items.map(cardHtml).join("");
+  const isCover = activeCat === "random";
+  const cards = isCover
+    ? items.map(coverCardHtml).join("")
+    : items.map(cardHtml).join("");
   const pager = buildPager(page, totalPages, hrefFor);
   const body = `
 ${topBar(activeCat, query, user)}
@@ -989,7 +1032,7 @@ ${topBar(activeCat, query, user)}
       <h2 style="display:flex;align-items:center;gap:8px">${getSvgIcon(activeCat, 22)} ${htmlEscape(title)}</h2>
       <span style="color:var(--mut);font-size:13px">${total} Total</span>
     </div>
-    <div class="grid">${cards || `<div class="empty">${query ? "ရှာဖွေမှု မတွေ့ပါ" : "ဘာမှ မရှိသေးပါ"}</div>`}</div>
+    <div class="${isCover ? "cover-grid" : "grid"}">${cards || `<div class="empty">${query ? "ရှာဖွေမှု မတွေ့ပါ" : "ဘာမှ မရှိသေးပါ"}</div>`}</div>
     ${pager}
   </div>
 </div>
@@ -1524,6 +1567,7 @@ function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], i
               <option value="movie">🎬 Movie</option>
               <option value="series">📺 Series</option>
               <option value="adult">🔞 21+</option>
+              <option value="random">⭐ Random Best</option>
             </select>
           </div>
           <div><label>Title</label><input type="text" name="title" id="addTitle" placeholder="ဥပမာ - Action 2025" required></div>
@@ -1553,6 +1597,7 @@ function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], i
       <option value="movie" ${itType === "movie" ? "selected" : ""}>🎬 Movie</option>
       <option value="series" ${itType === "series" ? "selected" : ""}>📺 Series</option>
       <option value="adult" ${itType === "adult" ? "selected" : ""}>🔞 21+</option>
+      <option value="random" ${itType === "random" ? "selected" : ""}>⭐ Random Best</option>
     </select>
     <input type="hidden" name="itpage" value="1">
     <button type="submit" class="btn" style="width:auto;margin:0;padding:11px 18px">Search</button>
@@ -1686,6 +1731,7 @@ function adminEditPage(item, csrfToken, error = "") {
           <option value="movie" ${item.type === "movie" ? "selected" : ""}>🎬 Movie</option>
           <option value="series" ${item.type === "series" ? "selected" : ""}>📺 Series</option>
           <option value="adult" ${item.type === "adult" ? "selected" : ""}>🔞 21+</option>
+          <option value="random" ${item.type === "random" ? "selected" : ""}>⭐ Random Best</option>
         </select>
       </div>
       <div><label>Title</label><input type="text" name="title" value="${htmlEscape(item.title || "")}" required></div>
@@ -1906,6 +1952,7 @@ export async function onRequest(context) {
       { type: "movie",  items: byType("movie").slice(0, HOME_PREVIEW_COUNT) },
       { type: "series", items: byType("series").slice(0, HOME_PREVIEW_COUNT) },
       { type: "adult",  items: byType("adult").slice(0, HOME_PREVIEW_COUNT) },
+      { type: "random", items: byType("random").slice(0, 6) },
     ];
     const withImg = all.filter(i => i.slide_image || i.poster);
     const slidePool = withImg.slice(0, 6);
