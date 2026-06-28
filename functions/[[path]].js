@@ -915,12 +915,12 @@ function cardHtml(it) {
 }
 
 // ── Cover card (2-up Viki style) — uses slide_image (landscape) first ──
+// ပြင်ဆင်ပြီးကုဒ်
 function coverCardHtml(it) {
   const img = it.slide_image || it.poster || "";
   return `
   <a class="cover-item" href="/watch/${htmlEscape(it.id)}">
     <div class="cover-img" style="background-image:url('${htmlEscape(img)}')">
-      <span class="cover-tag"></span>
       ${img ? "" : '<span class="noimg">🎬</span>'}
       <div class="play-ov"><span>▶</span></div>
     </div>
