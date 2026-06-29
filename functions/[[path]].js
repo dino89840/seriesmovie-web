@@ -891,10 +891,10 @@ function topBar(activeCat = "", query = "", user = null) {
 <div class="wrap">
   <nav class="navchips">
     <a class="${activeCat === "" ? "on" : ""}" href="/">${getSvgIcon("home")} Home</a>
-    <a class="${activeCat === "movie" ? "on" : ""}" href="/category/movie">${getSvgIcon("movie")} R Mosaic</a>
+    <a class="${activeCat === "movie" ? "on" : ""}" href="/category/mosaic">${getSvgIcon("movie")} R Mosaic</a>
     <a class="${activeCat === "series" ? "on" : ""}" href="/category/series">${getSvgIcon("series")} Series</a>
-    <a class="${activeCat === "adult" ? "on" : ""}" href="/category/adult">${getSvgIcon("adult")} 21+ mmsub</a>
-    <a class="${activeCat === "random" ? "on" : ""}" href="/category/random">${getSvgIcon("random")} Random Best</a>
+    <a class="${activeCat === "adult" ? "on" : ""}" href="/category/mmsub">${getSvgIcon("adult")} 21+ mmsub</a>
+    <a class="${activeCat === "best" ? "on" : ""}" href="/category/random">${getSvgIcon("random")} Random Best</a>
   </nav>
 </div>`;
 }
