@@ -1067,6 +1067,16 @@ ${footer()}`;
 
   const script = `
 (function(){
+  // ── welcome box ပေါ်ပြီးရင် URL ထဲက ?welcome=1 ကို ဖယ်ထုတ် (refresh လုပ်လည်း ထပ်မပေါ်အောင်) ──
+  try{
+    if(location.search.indexOf('welcome=1')!==-1 && window.history && window.history.replaceState){
+      var u=new URL(location.href);
+      u.searchParams.delete('welcome');
+      var clean=u.pathname + (u.searchParams.toString() ? ('?'+u.searchParams.toString()) : '') + u.hash;
+      window.history.replaceState(null, '', clean);
+    }
+  }catch(_){}
+
   var track=document.getElementById('heroTrack');
   if(!track) return;
   var slides=track.children.length;
@@ -1135,8 +1145,8 @@ ${footer()}`;
    MY LIST PAGE  (bookmarks)
    ══════════════════════════════════════════════════ */
 function myListPage(items, user) {
-  // random best ကားတွေ (16:9 cover) နဲ့ ကျန်တာ (2:3 poster) ခွဲ
-  const cards = items.map(it => it.type === "random" ? coverCardHtml(it) : cardHtml(it)).join("");
+  // save list လုပ်ထားသမျှ ဇာတ်ကားအားလုံးကို Random Best ပုံစံ (16:9 cover) တစ်မျိုးတည်း ပြ
+  const cards = items.map(it => coverCardHtml(it)).join("");
   const body = `
 ${topBar("", "", user)}
 <div class="wrap">
@@ -1152,11 +1162,10 @@ ${topBar("", "", user)}
   </div>
 </div>
 ${footer()}`;
+  // Random Best နဲ့တူညီတဲ့ 2-up / 3-up cover grid (16:9 အချိုးညီ)
   const mlCss = `
-    .mylist-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:13px}
-    @media(min-width:560px){.mylist-grid{grid-template-columns:repeat(3,1fr);gap:15px}}
-    @media(min-width:820px){.mylist-grid{grid-template-columns:repeat(4,1fr)}}
-    @media(min-width:1024px){.mylist-grid{grid-template-columns:repeat(5,1fr)}}
+    .mylist-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
+    @media(min-width:820px){.mylist-grid{grid-template-columns:repeat(3,1fr);gap:18px}}
   `;
   return pageShell("My List — CM FLIX", body, { extraCss: mlCss });
 }
