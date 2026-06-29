@@ -4,7 +4,7 @@
 //  • Storage: Cloudflare D1 (SQLite)  — binding name: DB
 //  • Signed / expiring URL streaming (real R2/mp4 link NEVER in HTML)
 //  • Key-only login (admin-created keys, device-limited)
-//  • Categories: Movies / Series / 21+  (Series: Season → Episode)
+//  • Categories: R Mosaic / Series / 21+  (Series: Season → Episode)
 //  • Slider supports separate landscape banner image (slide_image)
 //  • Modern Plyr player + polished UI / logo
 //  • My Key chip shows premium days-left (P=NDay) when logged in
@@ -37,7 +37,7 @@ const TMDB_BACKDROP_SIZE = "w1280";  // အလျားလိုက် slide ban
 
 // ── Categories (fixed) ──
 const CATEGORIES = {
-  movie:  { id: "movie",  name: "Movies",  icon: "" },
+  movie:  { id: "movie",  name: "R Mosaic",  icon: "" },
   series: { id: "series", name: "Series",  icon: "" },
   adult:  { id: "adult",  name: "21+",     icon: "" },
   random: { id: "random", name: "Random Best", icon: "" },
@@ -883,7 +883,7 @@ function topBar(activeCat = "", query = "", user = null) {
     <input type="search" name="q" value="${htmlEscape(query)}" placeholder="ဇာတ်ကား / Series ရှာရန်…" autocomplete="off">
   </form>
   <div class="acts">
-    <a href="/category/movie">Movies</a>
+    <a href="/category/movie">R Mosaic</a>
     <a href="/category/series">Series</a>
     <a class="me${lbl.premium ? " premium" : ""}" href="/account">${htmlEscape(lbl.text)}</a>
   </div>
@@ -891,7 +891,7 @@ function topBar(activeCat = "", query = "", user = null) {
 <div class="wrap">
   <nav class="navchips">
     <a class="${activeCat === "" ? "on" : ""}" href="/">${getSvgIcon("home")} Home</a>
-    <a class="${activeCat === "movie" ? "on" : ""}" href="/category/movie">${getSvgIcon("movie")} Movies</a>
+    <a class="${activeCat === "movie" ? "on" : ""}" href="/category/movie">${getSvgIcon("movie")} R Mosaic</a>
     <a class="${activeCat === "series" ? "on" : ""}" href="/category/series">${getSvgIcon("series")} Series</a>
     <a class="${activeCat === "adult" ? "on" : ""}" href="/category/adult">${getSvgIcon("adult")} 21+</a>
     <a class="${activeCat === "random" ? "on" : ""}" href="/category/random">${getSvgIcon("random")} Random Best</a>
