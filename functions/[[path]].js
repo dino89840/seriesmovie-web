@@ -446,6 +446,64 @@ async function listItems(env) {
     created_at: r.created_at || 0,
   }));
 }
+// All item summaries (metadata only)
+async function listItems(env) {
+  const res = await db(env).prepare(
+    "SELECT id, title, poster, slide_image, type, created_at FROM items ORDER BY created_at DESC"
+  ).all();
+  return (res.results || []).map(r => ({
+    id: r.id,
+    title: r.title || "",
+    poster: r.poster || "",
+    slide_image: r.slide_image || "",
+    type: r.type || "movie",
+    created_at: r.created_at || 0,
+  }));
+}
+
+/* ══════════════════════════════════════════════════
+   BOOKMARKS  (D1: table `bookmarks`)
+   ══════════════════════════════════════════════════ */
+async function isBookmarked(env, keyId, itemId) {
+  if (!keyId || !itemId) return false;
+  const row = await db(env).prepare(
+    "SELECT item_id FROM bookmarks WHERE key_id=? AND item_id=?"
+  ).bind(keyId, itemId).first();
+  return row !== null;
+}
+
+async function addBookmark(env, keyId, itemId) {
+  if (!keyId || !itemId) return;
+  await db(env).prepare(
+    `INSERT INTO bookmarks (key_id, item_id, created_at) VALUES (?,?,?)
+     ON CONFLICT(key_id, item_id) DO NOTHING`
+  ).bind(keyId, itemId, Date.now()).run();
+}
+
+async function removeBookmark(env, keyId, itemId) {
+  if (!keyId || !itemId) return;
+  await db(env).prepare(
+    "DELETE FROM bookmarks WHERE key_id=? AND item_id=?"
+  ).bind(keyId, itemId).run();
+}
+
+// user ၏ bookmark လုပ်ထားသော items အားလုံး (item metadata အပြည့်)
+async function listBookmarks(env, keyId) {
+  if (!keyId) return [];
+  const res = await db(env).prepare(
+    `SELECT i.id, i.title, i.poster, i.slide_image, i.type, i.created_at, b.created_at AS bm_at
+     FROM bookmarks b JOIN items i ON i.id = b.item_id
+     WHERE b.key_id=? ORDER BY b.created_at DESC`
+  ).bind(keyId).all();
+  return (res.results || []).map(r => ({
+    id: r.id,
+    title: r.title || "",
+    poster: r.poster || "",
+    slide_image: r.slide_image || "",
+    type: r.type || "movie",
+    created_at: r.created_at || 0,
+  }));
+}
 
 /* ══════════════════════════════════════════════════
    SESSIONS  (D1: table `sessions`)
@@ -891,6 +949,7 @@ function topBar(activeCat = "", query = "", user = null) {
 <div class="wrap">
   <nav class="navchips">
     <a class="${activeCat === "" ? "on" : ""}" href="/">${getSvgIcon("home")} Home</a>
+    ${user && !user.isAdmin ? `<a href="/mylist"><svg style="width:16px;height:16px;display:inline-block;vertical-align:middle;stroke-width:2.2;fill:none;stroke:currentColor" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg> My List</a>` : ""}
     <a class="${activeCat === "movie" ? "on" : ""}" href="/category/movie">${getSvgIcon("movie")} R Mosaic</a>
     <a class="${activeCat === "series" ? "on" : ""}" href="/category/series">${getSvgIcon("series")} Series</a>
     <a class="${activeCat === "adult" ? "on" : ""}" href="/category/adult">${getSvgIcon("adult")} 21+ mmsub</a>
@@ -1041,9 +1100,32 @@ ${footer()}`;
 }
 
 /* ══════════════════════════════════════════════════
+   MY LIST PAGE  (bookmarks)
+   ══════════════════════════════════════════════════ */
+function myListPage(items, user) {
+  const cards = items.map(cardHtml).join("");
+  const body = `
+${topBar("", "", user)}
+<div class="wrap">
+  <div class="section">
+    <div class="section-head">
+      <h2 style="display:flex;align-items:center;gap:8px">
+        <svg style="width:22px;height:22px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+        My List
+      </h2>
+      <span style="color:var(--mut);font-size:13px">${items.length} Saved</span>
+    </div>
+    <div class="grid">${cards || `<div class="empty">သိမ်းထားတဲ့ ဇာတ်ကား မရှိသေးပါ။ ကြိုက်တဲ့ကားရဲ့ စာမျက်နှာမှာ "+ My List ထဲ ထည့်မယ်" ကို နှိပ်ပါ။</div>`}</div>
+  </div>
+</div>
+${footer()}`;
+  return pageShell("My List — CM FLIX", body);
+}
+
+/* ══════════════════════════════════════════════════
    WATCH PAGE  — Plyr player, signed stream URLs only
    ══════════════════════════════════════════════════ */
-function watchPage(item, user, gated, streams) {
+function watchPage(item, user, gated, streams, bookmarked = false) {
   const cat = CATEGORIES[item.type] || CATEGORIES.movie;
   const loggedIn = !!user;
 
@@ -1126,6 +1208,12 @@ function watchPage(item, user, gated, streams) {
     /* မီးခိုးရောင်ပုတ်ပုတ် Download Button */
     .btn-dl{background:#1f1f1f;color:#ffffff !important;border:1px solid rgba(255,255,255,0.03);box-shadow:0 4px 8px rgba(0,0,0,.3); -webkit-touch-callout: none; user-select: none;}
     .btn-dl:hover{background:#2b2b2b;transform:translateY(-1px)}
+
+    /* Bookmark / My List Button */
+    .btn-bm{background:#15203a;color:#cfe1ff !important;border:1px solid var(--line);box-shadow:0 4px 8px rgba(0,0,0,.2);transition:.18s}
+    .btn-bm:hover{background:#1b2a4a;transform:translateY(-1px);border-color:var(--acc2)}
+    .btn-bm.on{background:linear-gradient(135deg,#0f9d58,#22c55e);color:#fff !important;border-color:transparent;box-shadow:0 4px 12px rgba(34,197,94,.35)}
+    .btn-bm .bm-ic{font-weight:900}
     
     @media(max-width:480px){.actions a,.actions button{padding:10px 10px;font-size:14px;gap:6px}}    .gate{background:#2a1420;border:1px solid #6a2030;color:#ffd;padding:12px 14px;border-radius:11px;margin:14px 0;font-size:14px;line-height:1.6}
     .gate a{color:var(--acc2);font-weight:800}
@@ -1181,6 +1269,10 @@ ${topBar(item.type, "", user)}
       <div class="actions">
         <button class="btn-play" id="btnPlay">▶ Play</button>
         <button class="btn-dl" id="btnDl">⬇ Download</button>
+        ${loggedIn ? `<button class="btn-bm${bookmarked ? " on" : ""}" id="btnBm" data-id="${htmlEscape(item.id)}" data-on="${bookmarked ? "1" : "0"}">
+          <span class="bm-ic">${bookmarked ? "✓" : "+"}</span>
+          <span class="bm-tx">${bookmarked ? "Saved" : "My List ထဲ ထည့်မယ်"}</span>
+        </button>` : ""}
       </div>
       ${item.type !== "series" ? `
         <h1 class="meta-title">${htmlEscape(item.title)}</h1>
@@ -1334,6 +1426,29 @@ ${footer()}`;
     });
   });
   ` : ``}
+
+  // ── Bookmark toggle ──
+  var btnBm=document.getElementById('btnBm');
+  if(btnBm){
+    btnBm.addEventListener('click',function(){
+      var on=btnBm.dataset.on==='1';
+      var id=btnBm.dataset.id;
+      btnBm.disabled=true;
+      fetch('/bookmark/toggle',{
+        method:'POST',
+        headers:{'content-type':'application/x-www-form-urlencoded'},
+        body:'id='+encodeURIComponent(id)+'&action='+(on?'remove':'add')
+      }).then(function(r){return r.json();}).then(function(d){
+        if(d && d.ok){
+          var nowOn=d.bookmarked;
+          btnBm.dataset.on=nowOn?'1':'0';
+          btnBm.classList.toggle('on',nowOn);
+          btnBm.querySelector('.bm-ic').textContent=nowOn?'✓':'+';
+          btnBm.querySelector('.bm-tx').textContent=nowOn?'Saved':'My List ထဲ ထည့်မယ်';
+        }
+      }).catch(function(){}).finally(function(){ btnBm.disabled=false; });
+    });
+  }
 })();`;
 
   return pageShell((item.title || "Watch") + " — CM FLIX", body, { extraCss, script, plyr: true });
@@ -1387,7 +1502,7 @@ function expiredPage(reason = "") {
   return pageShell("Expired — CM FLIX", body, { extraCss: AUTH_CSS });
 }
 
-function accountPage(user, info = "", error = "") {
+function accountPage(user, info = "", error = "", showWelcome = false) {
   const exp = user.expires_at
     ? new Date(user.expires_at).toLocaleString("en-GB", { hour12: false, timeZone: "Asia/Yangon" })
     : "—";
@@ -1446,6 +1561,20 @@ function accountPage(user, info = "", error = "") {
     ${info ? `<div class="acc-alert ok">${htmlEscape(info)}</div>` : ""}
     ${error ? `<div class="acc-alert err">${htmlEscape(error)}</div>` : ""}
 
+    ${showWelcome ? `
+    <div class="acc-welcome" id="accWelcome">
+      <div class="acc-welcome-ic">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M20 6 9 17l-5-5"/>
+        </svg>
+      </div>
+      <div class="acc-welcome-tx">
+        <div class="acc-welcome-h">ဝယ်ယူအားပေးမှုအတွက် ကျေးဇူးတင်ပါသည် 🎉</div>
+        <div class="acc-welcome-p">သင့် Key သက်တမ်း <b>P-${daysLeft}Day</b> ကျန်ရှိပါသည်။ CM FLIX မှ ကြိုဆိုပါတယ်!</div>
+      </div>
+      <button class="acc-welcome-x" onclick="this.closest('.acc-welcome').remove()">✕</button>
+    </div>` : ""}
+
     <!-- premium status -->
     <div class="acc-premium ${expired ? "is-expired" : ""}">
       <div class="acc-ring" style="--pct:${ringPct}">
@@ -1492,6 +1621,20 @@ function accountPage(user, info = "", error = "") {
 </div>`;
 
   const accCss = `
+    .acc-welcome{display:flex;align-items:center;gap:14px;padding:16px 18px;border-radius:16px;margin-bottom:20px;
+      background:linear-gradient(135deg,rgba(15,157,88,.18),rgba(34,197,94,.1));border:1px solid #1f7a48;
+      animation:accWelcomeIn .45s cubic-bezier(.2,.8,.2,1)}
+    @keyframes accWelcomeIn{from{opacity:0;transform:translateY(-10px) scale(.98)}to{opacity:1;transform:none}}
+    .acc-welcome-ic{width:46px;height:46px;flex:0 0 46px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+      background:linear-gradient(135deg,#0f9d58,#22c55e);box-shadow:0 6px 16px rgba(34,197,94,.4)}
+    .acc-welcome-ic svg{width:24px;height:24px;color:#fff}
+    .acc-welcome-tx{flex:1;min-width:0}
+    .acc-welcome-h{font-size:15.5px;font-weight:900;color:#eafff2;margin-bottom:3px}
+    .acc-welcome-p{font-size:13px;color:#bfe9cf;line-height:1.55}
+    .acc-welcome-p b{color:#7df0a8}
+    .acc-welcome-x{flex:0 0 auto;width:30px;height:30px;border-radius:8px;border:0;background:rgba(255,255,255,.08);
+      color:#cfe;cursor:pointer;font-size:14px;font-weight:700;transition:.15s}
+    .acc-welcome-x:hover{background:rgba(255,255,255,.16)}
     .acc-wrap{min-height:100vh;display:flex;align-items:flex-start;justify-content:center;padding:26px 16px 40px}
     .acc-card{width:100%;max-width:560px;background:linear-gradient(180deg,rgba(17,23,42,.96),rgba(11,15,28,.96));
       border:1px solid var(--line);border-radius:22px;padding:26px;box-shadow:0 24px 70px rgba(0,0,0,.6)}
@@ -2142,7 +2285,8 @@ export async function onRequest(context) {
     const user = await getCurrentUser(request, env);
     const gated = !user || isExpired(user);
     const streams = await buildStreams(env, item, gated, user);
-    return new Response(watchPage(item, user, gated, streams),
+    const bookmarked = (user && !user.isAdmin) ? await isBookmarked(env, user.keyId, item.id) : false;
+    return new Response(watchPage(item, user, gated, streams, bookmarked),
       { headers: { "content-type": "text/html; charset=utf-8" } }
     );
   }
@@ -2260,6 +2404,50 @@ export async function onRequest(context) {
   }
 
 
+  // ───────────── BOOKMARK TOGGLE ─────────────
+  if (path === "/bookmark/toggle" && method === "POST") {
+    const user = await getCurrentUser(request, env);
+    if (!user || user.isAdmin || isExpired(user)) {
+      return new Response(JSON.stringify({ ok: false, error: "login required" }), {
+        status: 403, headers: { "content-type": "application/json; charset=utf-8" },
+      });
+    }
+    const form = await parseForm(request);
+    const itemId = String(form.id || "").trim();
+    const action = String(form.action || "").trim();
+    if (!itemId) {
+      return new Response(JSON.stringify({ ok: false, error: "no id" }), {
+        status: 400, headers: { "content-type": "application/json; charset=utf-8" },
+      });
+    }
+    const item = await getItem(env, itemId);
+    if (!item) {
+      return new Response(JSON.stringify({ ok: false, error: "not found" }), {
+        status: 404, headers: { "content-type": "application/json; charset=utf-8" },
+      });
+    }
+    if (action === "remove") {
+      await removeBookmark(env, user.keyId, itemId);
+    } else {
+      await addBookmark(env, user.keyId, itemId);
+    }
+    const nowOn = await isBookmarked(env, user.keyId, itemId);
+    return new Response(JSON.stringify({ ok: true, bookmarked: nowOn }), {
+      headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" },
+    });
+  }
+
+  // ───────────── MY LIST (bookmarks) ─────────────
+  if (path === "/mylist" && method === "GET") {
+    const user = await getCurrentUser(request, env);
+    if (!user) return Response.redirect(new URL("/login?next=/mylist", url).toString(), 302);
+    if (user.isAdmin) return Response.redirect(new URL("/admin", url).toString(), 302);
+    const items = await listBookmarks(env, user.keyId);
+    return new Response(myListPage(items, user),
+      { headers: { "content-type": "text/html; charset=utf-8" } }
+    );
+  }
+
   // ───────────── AUTH STATUS ─────────────
   if (path === "/auth/status" && method === "GET") {
     const cur = await getCurrentUser(request, env);
@@ -2329,7 +2517,9 @@ export async function onRequest(context) {
         ip_prefix: ipNetworkPrefix(clientIp),
         label: shortDeviceLabel(request),
       });
-      const dest = safeNext.startsWith("/") ? safeNext : "/";
+      // login အောင်မြင်ရင် — next သတ်မှတ်မထားရင် account page (welcome box ပါ) သို့ ပို့မယ်
+      let dest = safeNext.startsWith("/") ? safeNext : "/";
+      if (dest === "/") dest = "/account?welcome=1";
       return new Response(null, { status: 302, headers: { "Location": dest, "Set-Cookie": setCookieHeader(COOKIE_NAME, token) } });
     }
   }
@@ -2346,7 +2536,8 @@ export async function onRequest(context) {
     const cur = await getCurrentUser(request, env);
     if (!cur) return Response.redirect(new URL("/login", url).toString(), 302);
     if (cur.isAdmin) return Response.redirect(new URL("/admin", url).toString(), 302);
-    return new Response(accountPage(cur),
+    const showWelcome = url.searchParams.get("welcome") === "1";
+    return new Response(accountPage(cur, "", "", showWelcome),
       { headers: { "content-type": "text/html; charset=utf-8" } }
     );
   }
