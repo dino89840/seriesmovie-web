@@ -579,6 +579,20 @@ async function removeBookmark(env, keyId, itemId) {
     "DELETE FROM bookmarks WHERE key_id=? AND item_id=?"
   ).bind(keyId, itemId).run();
 }
+async function removeBookmark(env, keyId, itemId) {
+  if (!keyId || !itemId) return;
+  await db(env).prepare(
+    "DELETE FROM bookmarks WHERE key_id=? AND item_id=?"
+  ).bind(keyId, itemId).run();
+}
+
+// user ၏ bookmark အားလုံးကို တစ်ခါတည်း ဖျက်
+async function clearAllBookmarks(env, keyId) {
+  if (!keyId) return;
+  await db(env).prepare(
+    "DELETE FROM bookmarks WHERE key_id=?"
+  ).bind(keyId).run();
+}
 
 // user ၏ bookmark လုပ်ထားသော items အားလုံး (item metadata အပြည့်)
 async function listBookmarks(env, keyId) {
@@ -1275,9 +1289,10 @@ ${footer()}`;
 /* ══════════════════════════════════════════════════
    MY LIST PAGE  (bookmarks)
    ══════════════════════════════════════════════════ */
-function myListPage(items, user) {
+function myListPage(items, user, csrfToken = "") {
   // save list လုပ်ထားသမျှ ဇာတ်ကားအားလုံးကို Random Best ပုံစံ (16:9 cover) တစ်မျိုးတည်း ပြ
   const cards = items.map(it => coverCardHtml(it)).join("");
+  const hasItems = items.length > 0;
   const body = `
 ${topBar("", "", user)}
 <div class="wrap">
@@ -1287,9 +1302,30 @@ ${topBar("", "", user)}
         <svg style="width:22px;height:22px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
         My List
       </h2>
-      <span style="color:var(--mut);font-size:13px">${items.length} Saved</span>
+      <div style="display:flex;align-items:center;gap:12px">
+        <span style="color:var(--mut);font-size:13px">${items.length} Saved</span>
+        ${hasItems ? `<button id="clearAllBtn" class="ml-clear-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+          Clear All
+        </button>` : ""}
+      </div>
     </div>
     <div class="mylist-grid">${cards || `<div class="empty">သိမ်းထားတဲ့ ဇာတ်ကား မရှိသေးပါ။ ကြိုက်တဲ့ကားရဲ့ စာမျက်နှာမှာ "+ My List ထဲ ထည့်မယ်" ကို နှိပ်ပါ။</div>`}</div>
+  </div>
+</div>
+
+<!-- Custom Confirm Box -->
+<div class="cm-modal-overlay" id="clearModal">
+  <div class="cm-modal">
+    <div class="cm-modal-ic">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+    </div>
+    <div class="cm-modal-h">My List အားလုံး ဖျက်မှာလား?</div>
+    <div class="cm-modal-p">သိမ်းထားသမျှ ဇာတ်ကား <b>${items.length}</b> ကား အားလုံးကို စာရင်းမှ ဖယ်ရှားပါမည်။ ဒီလုပ်ဆောင်ချက်ကို ပြန်ပြင်လို့ မရပါ။</div>
+    <div class="cm-modal-actions">
+      <button class="cm-modal-btn no" id="clearNo">မဖျက်တော့ပါ</button>
+      <button class="cm-modal-btn yes" id="clearYes">အားလုံး ဖျက်မယ်</button>
+    </div>
   </div>
 </div>
 ${footer()}`;
@@ -1297,14 +1333,66 @@ ${footer()}`;
   const mlCss = `
     .mylist-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
     @media(min-width:820px){.mylist-grid{grid-template-columns:repeat(3,1fr);gap:18px}}
+    .ml-clear-btn{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:10px;border:1px solid #5a2030;
+      background:#2a1420;color:#f88;font-weight:700;font-size:13px;cursor:pointer;font-family:inherit;transition:.15s}
+    .ml-clear-btn:hover{background:#3a1828;color:#ffb;border-color:#7a2838;transform:translateY(-1px)}
+    .cm-modal-overlay{position:fixed;inset:0;z-index:9999;display:none;align-items:center;justify-content:center;padding:20px;
+      background:rgba(3,5,12,.78);backdrop-filter:blur(6px)}
+    .cm-modal-overlay.show{display:flex;animation:cmFade .2s ease}
+    @keyframes cmFade{from{opacity:0}to{opacity:1}}
+    .cm-modal{width:100%;max-width:400px;background:linear-gradient(180deg,#141a2e,#0d1322);border:1px solid var(--line);
+      border-radius:20px;padding:28px 24px;text-align:center;box-shadow:0 24px 70px rgba(0,0,0,.7);
+      animation:cmPop .26s cubic-bezier(.2,.9,.3,1.2)}
+    @keyframes cmPop{from{opacity:0;transform:scale(.9) translateY(10px)}to{opacity:1;transform:none}}
+    .cm-modal-ic{width:58px;height:58px;margin:0 auto 16px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+      background:linear-gradient(135deg,#c43,#e50914);box-shadow:0 8px 22px rgba(229,9,20,.45)}
+    .cm-modal-ic svg{width:28px;height:28px;color:#fff}
+    .cm-modal-h{font-size:18px;font-weight:900;color:#fff;margin-bottom:8px}
+    .cm-modal-p{font-size:13.5px;color:var(--mut);line-height:1.65;margin-bottom:22px}
+    .cm-modal-p b{color:var(--acc2)}
+    .cm-modal-actions{display:flex;gap:10px}
+    .cm-modal-btn{flex:1;padding:12px;border-radius:11px;border:0;font-weight:800;font-size:14px;cursor:pointer;font-family:inherit;transition:.15s}
+    .cm-modal-btn.no{background:#1a2540;color:#cfe;border:1px solid var(--line)}
+    .cm-modal-btn.no:hover{background:#22304f}
+    .cm-modal-btn.yes{background:linear-gradient(135deg,#c43,#e50914);color:#fff;box-shadow:0 4px 14px rgba(229,9,20,.4)}
+    .cm-modal-btn.yes:hover{filter:brightness(1.1)}
+    .cm-modal-btn:disabled{opacity:.6;cursor:not-allowed}
   `;
-  return pageShell("My List — CM FLIX", body, { extraCss: mlCss });
+  const script = `
+(function(){
+  var btn=document.getElementById('clearAllBtn');
+  var modal=document.getElementById('clearModal');
+  var noBtn=document.getElementById('clearNo');
+  var yesBtn=document.getElementById('clearYes');
+  if(!btn||!modal) return;
+  function open(){ modal.classList.add('show'); }
+  function close(){ modal.classList.remove('show'); }
+  btn.addEventListener('click',open);
+  if(noBtn) noBtn.addEventListener('click',close);
+  modal.addEventListener('click',function(e){ if(e.target===modal) close(); });
+  document.addEventListener('keydown',function(e){ if(e.key==='Escape') close(); });
+  if(yesBtn){
+    yesBtn.addEventListener('click',function(){
+      yesBtn.disabled=true; noBtn.disabled=true;
+      yesBtn.textContent='ဖျက်နေသည်…';
+      fetch('/bookmark/clear',{
+        method:'POST',
+        headers:{'content-type':'application/x-www-form-urlencoded'},
+        body:'csrf_token='+encodeURIComponent(${JSON.stringify(csrfToken)})
+      }).then(function(r){return r.json();}).then(function(d){
+        if(d&&d.ok){ location.reload(); }
+        else{ yesBtn.disabled=false; noBtn.disabled=false; yesBtn.textContent='အားလုံး ဖျက်မယ်'; alert((d&&d.error)||'ဖျက်လို့ မရပါ'); }
+      }).catch(function(){ yesBtn.disabled=false; noBtn.disabled=false; yesBtn.textContent='အားလုံး ဖျက်မယ်'; });
+    });
+  }
+})();`;
+  return pageShell("My List — CM FLIX", body, { extraCss: mlCss, script });
 }
 /* ══════════════════════════════════════════════════
    ACTRESS PAGE — actress နဲ့ဆိုင်တဲ့ ဇာတ်ကားများ
    ══════════════════════════════════════════════════ */
 function actressPage(actress, items, user) {
-  const cards = items.map(it => cardHtml(it)).join("");
+  const cards = items.map(it => coverCardHtml(it)).join("");
   const body = `
 ${topBar("", "", user)}
 <div class="wrap">
@@ -1317,7 +1405,7 @@ ${topBar("", "", user)}
     </div>
   </div>
   <div class="section">
-    <div class="grid">${cards || `<div class="empty">ဒီမင်းသမီးနဲ့ ဆိုင်တဲ့ ဇာတ်ကား မရှိသေးပါ</div>`}</div>
+    <div class="cover-grid">${cards || `<div class="empty">ဒီမင်းသမီးနဲ့ ဆိုင်တဲ့ ဇာတ်ကား မရှိသေးပါ</div>`}</div>
   </div>
 </div>
 ${footer()}`;
@@ -1482,6 +1570,15 @@ function watchPage(item, user, gated, streams, bookmarked = false, actresses = [
     .actress-chip:hover .actress-chip-img{border-color:#fff;box-shadow:0 6px 18px rgba(255,46,84,.55)}
     .actress-chip-name{font-size:11.5px;color:#e7ecf8;font-weight:600;text-align:center;line-height:1.3;
       display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+    .cm-toast{position:fixed;left:50%;bottom:30px;transform:translateX(-50%) translateY(20px);z-index:9999;
+      display:flex;align-items:center;gap:10px;padding:13px 20px;border-radius:13px;
+      background:linear-gradient(135deg,#2a1420,#1a1320);border:1px solid #6a2838;
+      box-shadow:0 12px 36px rgba(0,0,0,.6);color:#ffd;font-weight:700;font-size:14px;
+      opacity:0;pointer-events:none;transition:opacity .25s,transform .25s;max-width:90vw}
+    .cm-toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+    .cm-toast-ic{flex:0 0 auto;width:24px;height:24px;display:flex;align-items:center;justify-content:center;color:var(--acc2)}
+    .cm-toast-ic svg{width:22px;height:22px}
+    .cm-toast-tx{line-height:1.4}
   `;
 
   const hasInfo = !!(item.note || item.type === "series");
@@ -1526,6 +1623,14 @@ ${topBar(item.type, "", user)}
       </div>` : ""}
   </div>
 </div>
+
+<!-- Custom Toast / Notice Box -->
+<div class="cm-toast" id="cmToast">
+  <span class="cm-toast-ic">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>
+  </span>
+  <span class="cm-toast-tx" id="cmToastTx">အပိုင်း ရွေးပါ</span>
+</div>
 ${footer()}`;
   const script = `
 (function(){
@@ -1536,6 +1641,18 @@ ${footer()}`;
   var emptyEl=document.getElementById('playerEmpty');
   var nowEl=document.getElementById('nowPlaying');
   var cur={video:'',dl:'',title:''};
+
+  // ── Custom toast box (browser alert အစား) ──
+  var toastEl=document.getElementById('cmToast');
+  var toastTxEl=document.getElementById('cmToastTx');
+  var toastTimer=null;
+  function showToast(msg){
+    if(!toastEl){ return; }
+    if(toastTxEl) toastTxEl.textContent=msg;
+    toastEl.classList.add('show');
+    if(toastTimer) clearTimeout(toastTimer);
+    toastTimer=setTimeout(function(){ toastEl.classList.remove('show'); }, 2800);
+  }
 
   var coverEl=document.getElementById('posterCover');
   var player=null;
@@ -1612,7 +1729,7 @@ ${footer()}`;
   if(coverEl){
     coverEl.addEventListener('click',function(){
       if(GATED){ gateMsg(); return; }
-      if(!cur.video){ alert('အပိုင်း / link မရှိသေးပါ'); return; }
+      if(!cur.video){ showToast('${item.type === "series" ? "အပိုင်း ရွေးပါ — link မရှိသေးပါ" : "ဤအပိုင်း link မရှိသေးပါ"}'); return; }
       revealPlayer();
       applySource(cur.video);
       setTimeout(tryPlay,120);
@@ -1622,7 +1739,7 @@ ${footer()}`;
   if(btnPlay){
     btnPlay.addEventListener('click',function(){
       if(GATED){ gateMsg(); return; }
-      if(!cur.video){ alert('အပိုင်း / link မရှိသေးပါ'); return; }
+      if(!cur.video){ showToast('${item.type === "series" ? "အပိုင်း ရွေးပြီးမှ Play နှိပ်ပါ — link မရှိသေးပါ" : "ဤအပိုင်း link မရှိသေးပါ"}'); return; }
       revealPlayer();
       applySource(cur.video);
       setTimeout(tryPlay,120);
@@ -1635,7 +1752,7 @@ ${footer()}`;
     btnDl.addEventListener('click', function(e){
       e.preventDefault();
       if(GATED){ gateMsg(); return; }
-      if(!cur.dl){ alert('Download link မရှိသေးပါ'); return; }
+      if(!cur.dl){ showToast('${item.type === "series" ? "အပိုင်း ရွေးပြီးမှ Download နှိပ်ပါ — link မရှိသေးပါ" : "Download link မရှိသေးပါ"}'); return; }
       window.location.href = cur.dl;
     });
   }
@@ -2737,15 +2854,36 @@ export async function onRequest(context) {
     });
   }
 
+  // ───────────── BOOKMARK CLEAR ALL ─────────────
+  if (path === "/bookmark/clear" && method === "POST") {
+    const user = await getCurrentUser(request, env);
+    if (!user || user.isAdmin || isExpired(user)) {
+      return new Response(JSON.stringify({ ok: false, error: "login required" }), {
+        status: 403, headers: { "content-type": "application/json; charset=utf-8" },
+      });
+    }
+    const form = await parseForm(request);
+    if (!(await verifyCsrf(request, form))) {
+      return new Response(JSON.stringify({ ok: false, error: "csrf failed" }), {
+        status: 403, headers: { "content-type": "application/json; charset=utf-8" },
+      });
+    }
+    await clearAllBookmarks(env, user.keyId);
+    return new Response(JSON.stringify({ ok: true }), {
+      headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" },
+    });
+  }
+
   // ───────────── MY LIST (bookmarks) ─────────────
   if (path === "/mylist" && method === "GET") {
     const user = await getCurrentUser(request, env);
     if (!user) return Response.redirect(new URL("/login?next=/mylist", url).toString(), 302);
     if (user.isAdmin) return Response.redirect(new URL("/admin", url).toString(), 302);
     const items = await listBookmarks(env, user.keyId);
-    return new Response(myListPage(items, user),
-      { headers: { "content-type": "text/html; charset=utf-8" } }
-    );
+    const { token: csrfToken, isNew: csrfNew } = await getOrCreateCsrf(request, env);
+    const headers = { "content-type": "text/html; charset=utf-8" };
+    if (csrfNew) headers["Set-Cookie"] = csrfCookieHeader(csrfToken);
+    return new Response(myListPage(items, user, csrfToken), { headers });
   }
     // ───────────── ACTRESS PAGE (public) ─────────────
   if (path.startsWith("/actress/") && method === "GET") {
