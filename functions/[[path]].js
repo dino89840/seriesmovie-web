@@ -1468,6 +1468,18 @@ function watchPage(item, user, gated, streams, bookmarked = false, actresses = [
     .ep-tt{flex:1;font-size:14px;font-weight:600}
     .ep-play{opacity:.6;font-size:13px}
     .info-side .meta-title{font-size:20px}
+      .info-side .meta-title{font-size:20px}
+    .actress-row{margin:18px 0 6px}
+    .actress-row-lbl{font-size:12px;color:var(--mut);font-weight:700;margin-bottom:10px}
+    .actress-chips{display:flex;gap:12px;flex-wrap:wrap}
+    .actress-chip{display:inline-flex;flex-direction:column;align-items:center;gap:7px;text-decoration:none;width:84px;transition:.18s}
+    .actress-chip:hover{transform:translateY(-3px)}
+    .actress-chip-img{width:72px;height:72px;border-radius:50%;background-size:cover;background-position:center;background-color:#0e1830;
+      border:3px solid var(--acc2);display:flex;align-items:center;justify-content:center;font-size:28px;
+      box-shadow:0 4px 14px rgba(255,46,84,.35);transition:.18s}
+    .actress-chip:hover .actress-chip-img{border-color:#fff;box-shadow:0 6px 18px rgba(255,46,84,.55)}
+    .actress-chip-name{font-size:11.5px;color:#e7ecf8;font-weight:600;text-align:center;line-height:1.3;
+      display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
   `;
 
   const hasInfo = !!(item.note || item.type === "series");
@@ -1513,18 +1525,6 @@ ${topBar(item.type, "", user)}
   </div>
 </div>
 ${footer()}`;
-    .actress-row{margin:18px 0 6px}
-    .actress-row-lbl{font-size:12px;color:var(--mut);font-weight:700;margin-bottom:10px}
-    .actress-chips{display:flex;gap:12px;flex-wrap:wrap}
-    .actress-chip{display:inline-flex;flex-direction:column;align-items:center;gap:7px;text-decoration:none;width:84px;transition:.18s}
-    .actress-chip:hover{transform:translateY(-3px)}
-    .actress-chip-img{width:72px;height:72px;border-radius:50%;background-size:cover;background-position:center;background-color:#0e1830;
-      border:3px solid var(--acc2);display:flex;align-items:center;justify-content:center;font-size:28px;
-      box-shadow:0 4px 14px rgba(255,46,84,.35);transition:.18s}
-    .actress-chip:hover .actress-chip-img{border-color:#fff;box-shadow:0 6px 18px rgba(255,46,84,.55)}
-    .actress-chip-name{font-size:11.5px;color:#e7ecf8;font-weight:600;text-align:center;line-height:1.3;
-      display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-
   const script = `
 (function(){
   var GATED = ${gated ? "true" : "false"};
