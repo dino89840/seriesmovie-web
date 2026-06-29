@@ -1,3 +1,5 @@
+
+
 // functions/[[path]].js  — PART 1 of 2
 // ════════════════════════════════════════════════════════════════
 //  CM FLIX — Self-hosted Movie / Series streaming app  (D1 EDITION)
@@ -446,20 +448,7 @@ async function listItems(env) {
     created_at: r.created_at || 0,
   }));
 }
-// All item summaries (metadata only)
-async function listItems(env) {
-  const res = await db(env).prepare(
-    "SELECT id, title, poster, slide_image, type, created_at FROM items ORDER BY created_at DESC"
-  ).all();
-  return (res.results || []).map(r => ({
-    id: r.id,
-    title: r.title || "",
-    poster: r.poster || "",
-    slide_image: r.slide_image || "",
-    type: r.type || "movie",
-    created_at: r.created_at || 0,
-  }));
-}
+
 
 /* ══════════════════════════════════════════════════
    BOOKMARKS  (D1: table `bookmarks`)
