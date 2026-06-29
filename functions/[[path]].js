@@ -37,12 +37,12 @@ const TMDB_BACKDROP_SIZE = "w1280";  // အလျားလိုက် slide ban
 
 // ── Categories (fixed) ──
 const CATEGORIES = {
-  movie:  { id: "mosaic",  name: "R Mosaic",  icon: "" },
+  movie:  { id: "movie",  name: "R Mosaic",  icon: "" },
   series: { id: "series", name: "Series",  icon: "" },
-  adult:  { id: "mmsub",  name: "21+ mmsub",     icon: "" },
-  random: { id: "best", name: "Random Best", icon: "" },
+  adult:  { id: "adult",  name: "21+ mmsub",     icon: "" },
+  random: { id: "random", name: "Random Best", icon: "" },
 };
-function isValidCategory(c) { return c === "mosaic" || c === "series" || c === "mmsub" || c === "best"; }
+function isValidCategory(c) { return c === "movie" || c === "series" || c === "adult" || c === "random"; }
 
 // ── Per-request cache ──
 const _reqCache = new WeakMap();
@@ -891,10 +891,10 @@ function topBar(activeCat = "", query = "", user = null) {
 <div class="wrap">
   <nav class="navchips">
     <a class="${activeCat === "" ? "on" : ""}" href="/">${getSvgIcon("home")} Home</a>
-    <a class="${activeCat === "movie" ? "on" : ""}" href="/category/mosaic">${getSvgIcon("movie")} R Mosaic</a>
+    <a class="${activeCat === "movie" ? "on" : ""}" href="/category/movie">${getSvgIcon("movie")} R Mosaic</a>
     <a class="${activeCat === "series" ? "on" : ""}" href="/category/series">${getSvgIcon("series")} Series</a>
-    <a class="${activeCat === "adult" ? "on" : ""}" href="/category/mmsub">${getSvgIcon("adult")} 21+ mmsub</a>
-    <a class="${activeCat === "best" ? "on" : ""}" href="/category/random">${getSvgIcon("random")} Random Best</a>
+    <a class="${activeCat === "adult" ? "on" : ""}" href="/category/adult">${getSvgIcon("adult")} 21+ mmsub</a>
+    <a class="${activeCat === "random" ? "on" : ""}" href="/category/random">${getSvgIcon("random")} Random Best</a>
   </nav>
 </div>`;
 }
