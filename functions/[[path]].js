@@ -37,10 +37,10 @@ const TMDB_BACKDROP_SIZE = "w1280";  // အလျားလိုက် slide ban
 
 // ── Categories (fixed) ──
 const CATEGORIES = {
-  movie:  { id: "movie",  name: "R Mosaic",  icon: "" },
+  movie:  { id: "mosaic",  name: "R Mosaic",  icon: "" },
   series: { id: "series", name: "Series",  icon: "" },
-  adult:  { id: "adult",  name: "21+ mmsub",     icon: "" },
-  random: { id: "random", name: "Random Best", icon: "" },
+  adult:  { id: "mmsub",  name: "21+ mmsub",     icon: "" },
+  random: { id: "best", name: "Random Best", icon: "" },
 };
 function isValidCategory(c) { return c === "mosaic" || c === "series" || c === "mmsub" || c === "best"; }
 
