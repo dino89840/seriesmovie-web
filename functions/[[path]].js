@@ -501,11 +501,12 @@ async function getItem(env, id) {
 
 async function putItem(env, id, data) {
   await db(env).prepare(
-    `INSERT INTO items (id, type, title, poster, slide_image, note, created_at, video_url, download_url, seasons)
-     VALUES (?,?,?,?,?,?,?,?,?,?)
+    `INSERT INTO items (id, type, title, poster, slide_image, note, actress, created_at, video_url, download_url, seasons)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?)
      ON CONFLICT(id) DO UPDATE SET
        type=excluded.type, title=excluded.title, poster=excluded.poster,
-       slide_image=excluded.slide_image, note=excluded.note, created_at=excluded.created_at,
+       slide_image=excluded.slide_image, note=excluded.note, actress=excluded.actress,
+       created_at=excluded.created_at,
        video_url=excluded.video_url, download_url=excluded.download_url, seasons=excluded.seasons`
   ).bind(
     id,
@@ -514,6 +515,7 @@ async function putItem(env, id, data) {
     (data.poster || "").slice(0, 600),
     (data.slide_image || "").slice(0, 600),
     (data.note || "").slice(0, 5000),
+    (data.actress || "").slice(0, 300),
     data.created_at || 0,
     data.video_url || "",
     data.download_url || "",
