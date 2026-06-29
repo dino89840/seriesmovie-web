@@ -44,3 +44,11 @@ CREATE TABLE IF NOT EXISTS rate_limits (
   count INTEGER DEFAULT 0,
   reset_at INTEGER DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS bookmarks (
+  key_id TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  created_at INTEGER DEFAULT 0,
+  PRIMARY KEY (key_id, item_id)
+);
+CREATE INDEX IF NOT EXISTS idx_bookmarks_key ON bookmarks(key_id, created_at);
