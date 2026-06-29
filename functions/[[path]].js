@@ -311,6 +311,91 @@ async function tmdbSearch(env, title, type) {
     };
   } catch (_) { return null; }
 }
+/* ══════════════════════════════════════════════════
+   ACTRESS (javtiful) — name → slug → photo, with D1 cache
+   ══════════════════════════════════════════════════ */
+function actressNameToSlug(name) {
+  return String(name || "")
+    .trim().toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 80);
+}
+
+function extractActressImage(html) {
+  if (!html) return "";
+  let m = html.match(/<meta[^>]+property=["']og:image["'][^>]*content=["']([^"']+)["']/i);
+  if (m && m[1]) return m[1];
+  m = html.match(/<meta[^>]+content=["']([^"']+)["'][^>]*property=["']og:image["']/i);
+  if (m && m[1]) return m[1];
+  m = html.match(/<meta[^>]+name=["']twitter:image["'][^>]*content=["']([^"']+)["']/i);
+  if (m && m[1]) return m[1];
+  return "";
+}
+
+async function getActressCache(env, slug) {
+  if (!slug) return null;
+  try {
+    const row = await db(env).prepare("SELECT * FROM actress_cache WHERE slug=?").bind(slug).first();
+    if (!row) return null;
+    return { slug: row.slug, name: row.name || "", image: row.image || "", url: row.url || "" };
+  } catch (_) { return null; }
+}
+
+async function putActressCache(env, slug, data) {
+  try {
+    await db(env).prepare(
+      `INSERT INTO actress_cache (slug, name, image, url, created_at)
+       VALUES (?,?,?,?,?)
+       ON CONFLICT(slug) DO UPDATE SET
+         name=excluded.name, image=excluded.image, url=excluded.url, created_at=excluded.created_at`
+    ).bind(slug, data.name || "", data.image || "", data.url || "", Date.now()).run();
+  } catch (_) {}
+}
+
+// name → { ok, slug, name, image, url, cached } ; cache ရှိ→server မသွား
+async function lookupActress(env, name) {
+  const slug = actressNameToSlug(name);
+  if (!slug) return { ok: false, error: "နာမည် မှားနေပါတယ်။" };
+
+  const cached = await getActressCache(env, slug);
+  if (cached && cached.image) return { ok: true, ...cached, cached: true };
+
+  const pageUrl = `https://javtiful.com/actress/${slug}`;
+  let html = "";
+  try {
+    const resp = await fetch(pageUrl, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml",
+      },
+      redirect: "follow",
+    });
+    if (!resp.ok) return { ok: false, error: `မင်းသမီး ရှာမတွေ့ပါ (HTTP ${resp.status})` };
+    html = await resp.text();
+  } catch (_) {
+    return { ok: false, error: "Server ကို ဆက်သွယ်လို့ မရပါ။" };
+  }
+
+  const image = extractActressImage(html);
+  if (!image) return { ok: false, error: "ဒီနာမည်အတွက် ပုံ ရှာမတွေ့ပါ။" };
+
+  const result = { slug, name: String(name).trim().slice(0, 80), image, url: pageUrl };
+  await putActressCache(env, slug, result);
+  return { ok: true, ...result, cached: false };
+}
+
+// မင်းသမီးနာမည်တိုင်းကို slug အဖြစ်ပြောင်းပြီး unique list ထုတ် (item တစ်ခုမှာ နာမည်များ comma ခွဲ)
+function parseActressNames(raw) {
+  return String(raw || "")
+    .split(",")
+    .map(s => s.trim())
+    .filter(Boolean)
+    .slice(0, 10);
+}
+
 
 /* ══════════════════════════════════════════════════
    KEY STORAGE  (D1: table `keys`)
@@ -396,6 +481,7 @@ function rowToItem(row) {
     poster: row.poster || "",
     slide_image: row.slide_image || "",
     note: row.note || "",
+    actress: row.actress || "",
     created_at: row.created_at || 0,
     video_url: row.video_url || "",
     download_url: row.download_url || "",
@@ -405,6 +491,7 @@ function rowToItem(row) {
   }
   return item;
 }
+
 
 async function getItem(env, id) {
   if (!id) return null;
@@ -441,7 +528,7 @@ async function deleteItem(env, id) {
 // All item summaries (metadata only)
 async function listItems(env) {
   const res = await db(env).prepare(
-    "SELECT id, title, poster, slide_image, type, created_at FROM items ORDER BY created_at DESC"
+    "SELECT id, title, poster, slide_image, type, actress, created_at FROM items ORDER BY created_at DESC"
   ).all();
   return (res.results || []).map(r => ({
     id: r.id,
@@ -449,9 +536,20 @@ async function listItems(env) {
     poster: r.poster || "",
     slide_image: r.slide_image || "",
     type: r.type || "movie",
+    actress: r.actress || "",
     created_at: r.created_at || 0,
   }));
 }
+// actress slug တစ်ခုနဲ့ ဆိုင်တဲ့ items အားလုံး
+async function listItemsByActressSlug(env, slug) {
+  if (!slug) return [];
+  const all = await listItems(env);
+  return all.filter(i => {
+    const names = parseActressNames(i.actress);
+    return names.some(n => actressNameToSlug(n) === slug);
+  });
+}
+
 
 
 /* ══════════════════════════════════════════════════
@@ -1200,11 +1298,46 @@ ${footer()}`;
   `;
   return pageShell("My List — CM FLIX", body, { extraCss: mlCss });
 }
+/* ══════════════════════════════════════════════════
+   ACTRESS PAGE — actress နဲ့ဆိုင်တဲ့ ဇာတ်ကားများ
+   ══════════════════════════════════════════════════ */
+function actressPage(actress, items, user) {
+  const cards = items.map(it => cardHtml(it)).join("");
+  const body = `
+${topBar("", "", user)}
+<div class="wrap">
+  <div class="actress-hero">
+    <div class="actress-hero-img" style="background-image:url('${htmlEscape(actress.image || "")}')">${actress.image ? "" : "👤"}</div>
+    <div class="actress-hero-info">
+      <div class="actress-hero-lbl">👩 မင်းသမီး</div>
+      <h1 class="actress-hero-name">${htmlEscape(actress.name || actress.slug)}</h1>
+      <div class="actress-hero-count">${items.length} ဇာတ်ကား</div>
+    </div>
+  </div>
+  <div class="section">
+    <div class="grid">${cards || `<div class="empty">ဒီမင်းသမီးနဲ့ ဆိုင်တဲ့ ဇာတ်ကား မရှိသေးပါ</div>`}</div>
+  </div>
+</div>
+${footer()}`;
+  const css = `
+    .actress-hero{display:flex;align-items:center;gap:20px;margin:22px 0 8px;padding:20px;border-radius:18px;
+      background:linear-gradient(135deg,rgba(255,46,84,.14),rgba(14,24,48,.6));border:1px solid var(--line)}
+    .actress-hero-img{width:100px;height:100px;flex:0 0 100px;border-radius:50%;background-size:cover;background-position:center;
+      background-color:#0e1830;border:4px solid var(--acc2);display:flex;align-items:center;justify-content:center;font-size:42px;
+      box-shadow:0 6px 22px rgba(255,46,84,.45)}
+    .actress-hero-lbl{font-size:12px;color:var(--mut);font-weight:700}
+    .actress-hero-name{font-size:26px;font-weight:900;margin:4px 0 6px}
+    .actress-hero-count{font-size:13px;color:#cfe1ff;font-weight:600}
+    @media(max-width:560px){.actress-hero{gap:14px;padding:14px}.actress-hero-img{width:78px;height:78px;flex:0 0 78px;font-size:32px}.actress-hero-name{font-size:20px}}
+  `;
+  return pageShell((actress.name || "Actress") + " — CM FLIX", body, { extraCss: css });
+}
+
 
 /* ══════════════════════════════════════════════════
    WATCH PAGE  — Plyr player, signed stream URLs only
    ══════════════════════════════════════════════════ */
-function watchPage(item, user, gated, streams, bookmarked = false) {
+function watchPage(item, user, gated, streams, bookmarked = false, actresses = []) {
   const cat = CATEGORIES[item.type] || CATEGORIES.movie;
   const loggedIn = !!user;
 
@@ -1358,6 +1491,17 @@ ${topBar(item.type, "", user)}
         <span class="meta-cat" style="display:inline-flex;align-items:center;gap:6px">${getSvgIcon(item.type, 13)} ${htmlEscape(cat.name)}</span>
         ${item.note ? `<p class="meta-note">${htmlEscape(item.note)}</p>` : ""}
       ` : ""}
+      ${actresses.length ? `
+        <div class="actress-row">
+          <div class="actress-row-lbl">👩 မင်းသမီး</div>
+          <div class="actress-chips">
+            ${actresses.map(a => `
+              <a class="actress-chip" href="/actress/${htmlEscape(a.slug)}" title="${htmlEscape(a.name)} ၏ ဇာတ်ကားများ">
+                <span class="actress-chip-img" style="background-image:url('${htmlEscape(a.image || "")}')">${a.image ? "" : "👤"}</span>
+                <span class="actress-chip-name">${htmlEscape(a.name)}</span>
+              </a>`).join("")}
+          </div>
+        </div>` : ""}
       ${seriesNav}
     </div>
     ${hasInfo && item.type === "series" ? `
@@ -1369,6 +1513,17 @@ ${topBar(item.type, "", user)}
   </div>
 </div>
 ${footer()}`;
+    .actress-row{margin:18px 0 6px}
+    .actress-row-lbl{font-size:12px;color:var(--mut);font-weight:700;margin-bottom:10px}
+    .actress-chips{display:flex;gap:12px;flex-wrap:wrap}
+    .actress-chip{display:inline-flex;flex-direction:column;align-items:center;gap:7px;text-decoration:none;width:84px;transition:.18s}
+    .actress-chip:hover{transform:translateY(-3px)}
+    .actress-chip-img{width:72px;height:72px;border-radius:50%;background-size:cover;background-position:center;background-color:#0e1830;
+      border:3px solid var(--acc2);display:flex;align-items:center;justify-content:center;font-size:28px;
+      box-shadow:0 4px 14px rgba(255,46,84,.35);transition:.18s}
+    .actress-chip:hover .actress-chip-img{border-color:#fff;box-shadow:0 6px 18px rgba(255,46,84,.55)}
+    .actress-chip-name{font-size:11.5px;color:#e7ecf8;font-weight:600;text-align:center;line-height:1.3;
+      display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 
   const script = `
 (function(){
@@ -1922,6 +2077,16 @@ function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], i
           </div>
           <div><label>Title</label><input type="text" name="title" id="addTitle" placeholder="ဥပမာ - Action 2025" required></div>
         </div>
+                <div style="background:#0e2030;border:1px solid #1f4a6a;border-radius:11px;padding:12px">
+          <label style="margin-top:0">👩 မင်းသမီးနာမည် (များစွာဆို comma "," ခြားပါ)</label>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+            <input type="text" name="actress" id="addActress" placeholder="ဥပမာ - Kitano Mina, Itsukaichi Mei" style="flex:1;min-width:180px">
+            <button type="button" class="btn-ext" id="actressPrev" style="padding:9px 16px">ပုံကြည့်</button>
+          </div>
+          <div id="actressPrevBox" style="display:none;gap:10px;flex-wrap:wrap;margin-top:10px"></div>
+          <div id="actressPrevMsg" style="font-size:11.5px;color:var(--mut);margin-top:6px"></div>
+        </div>
+
         <div><label>Poster URL (ထောင်လိုက် ပုံ — card အတွက်)</label><input type="url" name="poster" id="addPoster" placeholder="https://.../poster.jpg"></div>
         <div><label>Slide Banner URL (အလျားလိုက် ပုံ — slider အတွက်၊ optional)</label><input type="url" name="slide_image" id="addSlide" placeholder="https://.../banner-wide.jpg">
           <div style="font-size:11px;color:var(--mut);margin-top:4px">ကွက်လပ်ထားရင် slider မှာ poster ကို သုံးမယ်။ (16:9 / landscape ပုံ ထည့်ရင် အကောင်းဆုံး)</div>
@@ -2033,6 +2198,42 @@ function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], i
     root.querySelectorAll('.series-fields').forEach(function(el){ el.style.display=isSeries?'block':'none'; });
     root.querySelectorAll('.single-fields').forEach(function(el){ el.style.display=isSeries?'none':'block'; });
   }
+    // Actress preview (javtiful) — comma-separated နာမည်တွေ ပုံကြိုကြည့်
+  (function(){
+    var btn=document.getElementById('actressPrev'); if(!btn) return;
+    var inp=document.getElementById('addActress');
+    var box=document.getElementById('actressPrevBox');
+    var msg=document.getElementById('actressPrevMsg');
+    btn.addEventListener('click',function(){
+      var raw=(inp.value||'').trim();
+      if(!raw){ msg.textContent='နာမည် ထည့်ပါ။'; return; }
+      var names=raw.split(',').map(function(s){return s.trim();}).filter(Boolean).slice(0,10);
+      box.style.display='flex'; box.innerHTML=''; msg.textContent='ရှာနေသည်…';
+      var done=0;
+      names.forEach(function(name){
+        var cell=document.createElement('div');
+        cell.style.cssText='display:flex;flex-direction:column;align-items:center;gap:5px;width:78px';
+        cell.innerHTML='<div style="width:64px;height:64px;border-radius:50%;background:#0e1830;border:2px solid #1f4a6a;display:flex;align-items:center;justify-content:center;font-size:11px;color:#789">…</div><div style="font-size:10.5px;color:#cde;text-align:center">'+name+'</div>';
+        box.appendChild(cell);
+        fetch('/admin/actress?name='+encodeURIComponent(name))
+          .then(function(r){return r.json();})
+          .then(function(d){
+            done++;
+            var c=cell.querySelector('div');
+            if(d.ok && d.image){
+              c.style.backgroundImage="url('"+d.image+"')";
+              c.style.backgroundSize='cover'; c.style.backgroundPosition='center';
+              c.style.borderColor='#22c55e'; c.textContent='';
+            }else{
+              c.style.borderColor='#c43'; c.textContent='✕';
+            }
+            if(done===names.length) msg.textContent='✅ ပြီးပါပြီ (✕ = ရှာမတွေ့)';
+          })
+          .catch(function(){ done++; });
+      });
+    });
+  })();
+
   // TMDB auto-fill
   (function(){
     var btn=document.getElementById('tmdbBtn'); if(!btn) return;
@@ -2086,6 +2287,9 @@ function adminEditPage(item, csrfToken, error = "") {
       </div>
       <div><label>Title</label><input type="text" name="title" value="${htmlEscape(item.title || "")}" required></div>
     </div>
+        <label>👩 မင်းသမီးနာမည် (များစွာဆို comma "," ခြားပါ)</label>
+    <input type="text" name="actress" value="${htmlEscape(item.actress || "")}" placeholder="ဥပမာ - Kitano Mina, Itsukaichi Mei">
+
     <label>Poster URL (ထောင်လိုက် — card)</label><input type="url" name="poster" value="${htmlEscape(item.poster || "")}">
     <label>Slide Banner URL (အလျားလိုက် — slider, optional)</label><input type="url" name="slide_image" value="${htmlEscape(item.slide_image || "")}">
     <div class="single-fields" style="display:${isSeries ? "none" : "block"}">
@@ -2369,7 +2573,15 @@ export async function onRequest(context) {
     const gated = !user || isExpired(user);
     const streams = await buildStreams(env, item, gated, user);
     const bookmarked = (user && !user.isAdmin) ? await isBookmarked(env, user.keyId, item.id) : false;
-    return new Response(watchPage(item, user, gated, streams, bookmarked),
+    // မင်းသမီးနာမည်တွေအတွက် ပုံ/slug ယူ (cache ကနေ)
+    const actresses = [];
+    for (const nm of parseActressNames(item.actress)) {
+      const slug = actressNameToSlug(nm);
+      if (!slug) continue;
+      const c = await getActressCache(env, slug);
+      actresses.push({ slug, name: nm, image: c ? c.image : "" });
+    }
+    return new Response(watchPage(item, user, gated, streams, bookmarked, actresses),
       { headers: { "content-type": "text/html; charset=utf-8" } }
     );
   }
@@ -2533,6 +2745,25 @@ export async function onRequest(context) {
       { headers: { "content-type": "text/html; charset=utf-8" } }
     );
   }
+    // ───────────── ACTRESS PAGE (public) ─────────────
+  if (path.startsWith("/actress/") && method === "GET") {
+    const slug = decodeURIComponent(path.slice("/actress/".length).split("/")[0]);
+    const user = await getCurrentUser(request, env);
+    const items = await listItemsByActressSlug(env, slug);
+    // cache ထဲက ပုံ/နာမည် ယူ၊ မရှိရင် items ထဲက နာမည်ကို သုံး
+    let info = await getActressCache(env, slug);
+    if (!info) {
+      let dispName = slug;
+      for (const it of items) {
+        const found = parseActressNames(it.actress).find(n => actressNameToSlug(n) === slug);
+        if (found) { dispName = found; break; }
+      }
+      info = { slug, name: dispName, image: "", url: "" };
+    }
+    return new Response(actressPage(info, items, user),
+      { headers: { "content-type": "text/html; charset=utf-8" } });
+  }
+
 
   // ───────────── AUTH STATUS ─────────────
   if (path === "/auth/status" && method === "GET") {
@@ -2694,6 +2925,14 @@ export async function onRequest(context) {
         { headers: { "content-type": "text/html; charset=utf-8", ...setCsrf } }
       );
     }
+        // ACTRESS lookup (JSON, admin only)
+    if (path === "/admin/actress" && method === "GET") {
+      const name = String(url.searchParams.get("name") || "").trim().slice(0, 80);
+      if (!name) return new Response(JSON.stringify({ ok: false, error: "နာမည် ထည့်ပါ။" }), { headers: { "content-type": "application/json" } });
+      const r = await lookupActress(env, name);
+      return new Response(JSON.stringify(r), { headers: { "content-type": "application/json", "cache-control": "no-store" } });
+    }
+
 
     // EDIT PAGE
     if (path.startsWith("/admin/edit/") && method === "GET") {
@@ -2719,11 +2958,19 @@ export async function onRequest(context) {
       const poster = String(form.poster || "").trim().slice(0, 600);
       const slide_image = String(form.slide_image || "").trim().slice(0, 600);
       const note = String(form.note || "").trim().slice(0, 5000);
+      const actress = String(form.actress || "").trim().slice(0, 300);
       if (!title) return redirectInfo("Title ဖြည့်ပါ။");
       if (poster && !isHttpUrl(poster)) return redirectInfo("Poster link မှားနေပါတယ်။");
       if (slide_image && !isHttpUrl(slide_image)) return redirectInfo("Slide banner link မှားနေပါတယ်။");
       const id = generateItemId();
-      const data = { id, type, title, poster, slide_image, note, created_at: Date.now() };
+      const data = { id, type, title, poster, slide_image, note, actress, created_at: Date.now() };
+      // မင်းသမီးနာမည်တွေအတွက် ပုံကို cache ထဲ ကြိုသိမ်း (watch page မှာ ပုံပေါ်ဖို့)
+      for (const nm of parseActressNames(actress)) {
+        const slug = actressNameToSlug(nm);
+        if (slug && !(await getActressCache(env, slug))) {
+          try { await lookupActress(env, nm); } catch (_) {}
+        }
+      }
       if (type === "series") {
         const r = sanitizeSeasons(form.seasons_json || "");
         if (!r.ok) return redirectInfo(r.err);
@@ -2752,6 +2999,7 @@ export async function onRequest(context) {
       const poster = String(form.poster || "").trim().slice(0, 600);
       const slide_image = String(form.slide_image || "").trim().slice(0, 600);
       const note = String(form.note || "").trim().slice(0, 5000);
+      const actress = String(form.actress || "").trim().slice(0, 300);
       if (!title) return new Response(adminEditPage(existing, csrfToken, "Title ဖြည့်ပါ။"),
         { headers: { "content-type": "text/html; charset=utf-8" } });
 
@@ -2762,7 +3010,13 @@ export async function onRequest(context) {
         { headers: { "content-type": "text/html; charset=utf-8" } });
 
 
-      const data = { id, type, title, poster, slide_image, note, created_at: existing.created_at || Date.now() };
+      const data = { id, type, title, poster, slide_image, note, actress, created_at: existing.created_at || Date.now() };
+      for (const nm of parseActressNames(actress)) {
+        const slug = actressNameToSlug(nm);
+        if (slug && !(await getActressCache(env, slug))) {
+          try { await lookupActress(env, nm); } catch (_) {}
+        }
+      }
       if (type === "series") {
         const r = sanitizeSeasons(form.seasons_json || "");
         if (!r.ok) return new Response(adminEditPage({ ...existing, type, title, poster, slide_image, note }, csrfToken, r.err),
