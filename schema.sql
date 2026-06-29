@@ -52,3 +52,13 @@ CREATE TABLE IF NOT EXISTS bookmarks (
   PRIMARY KEY (key_id, item_id)
 );
 CREATE INDEX IF NOT EXISTS idx_bookmarks_key ON bookmarks(key_id, created_at);
+ALTER TABLE items ADD COLUMN actress TEXT DEFAULT '';
+CREATE INDEX IF NOT EXISTS idx_items_actress ON items(actress);
+
+CREATE TABLE IF NOT EXISTS actress_cache (
+  slug TEXT PRIMARY KEY,
+  name TEXT DEFAULT '',
+  image TEXT DEFAULT '',
+  url TEXT DEFAULT '',
+  created_at INTEGER DEFAULT 0
+);
