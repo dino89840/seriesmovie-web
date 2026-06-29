@@ -42,7 +42,7 @@ const CATEGORIES = {
   adult:  { id: "adult",  name: "21+ mmsub",     icon: "" },
   random: { id: "random", name: "Random Best", icon: "" },
 };
-function isValidCategory(c) { return c === "movie" || c === "series" || c === "adult" || c === "random"; }
+function isValidCategory(c) { return c === "mosaic" || c === "series" || c === "mmsub" || c === "best"; }
 
 // ── Per-request cache ──
 const _reqCache = new WeakMap();
