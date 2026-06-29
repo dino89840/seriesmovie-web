@@ -1000,7 +1000,7 @@ function buildPager(page, totalPages, hrefFor) {
 /* ══════════════════════════════════════════════════
    HOME PAGE
    ══════════════════════════════════════════════════ */
-function homePage(slides, sections, user) {
+function homePage(slides, sections, user, showWelcome = false) {
   const slideEls = slides.map((s) => `
     <div class="slide">
       <div class="slide-bg" style="background-image:url('${htmlEscape(s.image || "")}')"></div>
@@ -1038,8 +1038,27 @@ function homePage(slides, sections, user) {
     </div>`;
   }).join("");
 
+  // premium ရက်ကျန် တွက်
+  const lbl = premiumLabel(user);
+  const welcomeBox = showWelcome ? `
+  <div class="wrap">
+    <div class="welcome-card" id="welcomeCard">
+      <div class="welcome-ic">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+      </div>
+      <div class="welcome-tx">
+        <div class="welcome-h">ဝယ်ယူအားပေးမှုအတွက် ကျေးဇူးတင်ပါသည်</div>
+        <div class="welcome-p">CM FLIX မှ ကြိုဆိုပါတယ်။ သင့် Key သက်တမ်း <b>${htmlEscape(lbl.text)}</b> ကျန်ရှိပါသည်။ ယခု ဇာတ်ကားများ အပြည့်အဝ ကြည့်ရှုနိုင်ပါပြီ။</div>
+      </div>
+      <button class="welcome-x" onclick="var w=document.getElementById('welcomeCard');if(w)w.remove();" aria-label="ပိတ်ရန်">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+  </div>` : "";
+
   const body = `
 ${topBar("", "", user)}
+${welcomeBox}
 ${heroHtml}
 <div class="wrap">
   ${sectionsHtml}
@@ -1063,7 +1082,31 @@ ${footer()}`;
   function reset(){ clearInterval(timer); timer=setInterval(function(){ go(i+1); }, 5000); }
 })();`;
 
-  return pageShell("CM FLIX — Movies & Series", body, { script });
+  const welcomeCss = `
+    .welcome-card{display:flex;align-items:center;gap:15px;margin:16px 0 4px;padding:16px 18px;border-radius:16px;
+      background:linear-gradient(135deg,rgba(15,157,88,.16),rgba(34,197,94,.08));border:1px solid #1f7a48;
+      box-shadow:0 10px 30px rgba(15,157,88,.18);animation:welcomeIn .5s cubic-bezier(.2,.8,.2,1)}
+    @keyframes welcomeIn{from{opacity:0;transform:translateY(-12px) scale(.98)}to{opacity:1;transform:none}}
+    .welcome-ic{width:48px;height:48px;flex:0 0 48px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+      background:linear-gradient(135deg,#0f9d58,#22c55e);box-shadow:0 6px 18px rgba(34,197,94,.45)}
+    .welcome-ic svg{width:25px;height:25px;color:#fff}
+    .welcome-tx{flex:1;min-width:0}
+    .welcome-h{font-size:16px;font-weight:900;color:#eafff2;margin-bottom:4px;letter-spacing:.2px}
+    .welcome-p{font-size:13.5px;color:#bfe9cf;line-height:1.6}
+    .welcome-p b{color:#7df0a8;font-weight:800}
+    .welcome-x{flex:0 0 auto;width:34px;height:34px;border-radius:10px;border:0;background:rgba(255,255,255,.08);
+      color:#cfe;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:.15s}
+    .welcome-x svg{width:17px;height:17px}
+    .welcome-x:hover{background:rgba(255,255,255,.18);color:#fff}
+    @media(max-width:560px){
+      .welcome-card{gap:12px;padding:14px}
+      .welcome-ic{width:42px;height:42px;flex:0 0 42px}
+      .welcome-ic svg{width:22px;height:22px}
+      .welcome-h{font-size:14.5px}
+      .welcome-p{font-size:12.5px}
+    }
+  `;
+  return pageShell("CM FLIX — Movies & Series", body, { script, extraCss: welcomeCss });
 }
 
 function gridPage(title, activeCat, items, page, totalPages, total, hrefFor, query = "", user = null) {
@@ -1092,7 +1135,8 @@ ${footer()}`;
    MY LIST PAGE  (bookmarks)
    ══════════════════════════════════════════════════ */
 function myListPage(items, user) {
-  const cards = items.map(cardHtml).join("");
+  // random best ကားတွေ (16:9 cover) နဲ့ ကျန်တာ (2:3 poster) ခွဲ
+  const cards = items.map(it => it.type === "random" ? coverCardHtml(it) : cardHtml(it)).join("");
   const body = `
 ${topBar("", "", user)}
 <div class="wrap">
@@ -1104,11 +1148,17 @@ ${topBar("", "", user)}
       </h2>
       <span style="color:var(--mut);font-size:13px">${items.length} Saved</span>
     </div>
-    <div class="grid">${cards || `<div class="empty">သိမ်းထားတဲ့ ဇာတ်ကား မရှိသေးပါ။ ကြိုက်တဲ့ကားရဲ့ စာမျက်နှာမှာ "+ My List ထဲ ထည့်မယ်" ကို နှိပ်ပါ။</div>`}</div>
+    <div class="mylist-grid">${cards || `<div class="empty">သိမ်းထားတဲ့ ဇာတ်ကား မရှိသေးပါ။ ကြိုက်တဲ့ကားရဲ့ စာမျက်နှာမှာ "+ My List ထဲ ထည့်မယ်" ကို နှိပ်ပါ။</div>`}</div>
   </div>
 </div>
 ${footer()}`;
-  return pageShell("My List — CM FLIX", body);
+  const mlCss = `
+    .mylist-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:13px}
+    @media(min-width:560px){.mylist-grid{grid-template-columns:repeat(3,1fr);gap:15px}}
+    @media(min-width:820px){.mylist-grid{grid-template-columns:repeat(4,1fr)}}
+    @media(min-width:1024px){.mylist-grid{grid-template-columns:repeat(5,1fr)}}
+  `;
+  return pageShell("My List — CM FLIX", body, { extraCss: mlCss });
 }
 
 /* ══════════════════════════════════════════════════
@@ -2221,7 +2271,9 @@ export async function onRequest(context) {
       tag: (CATEGORIES[i.type] || CATEGORIES.movie).name.toUpperCase(),
       link: "/watch/" + i.id,
     }));
-    return new Response(homePage(slides, sections, user), { headers: { "content-type": "text/html; charset=utf-8" } });
+    // login ဝင်ပြီးစ user အတွက် welcome box ပြရန် (admin မဟုတ်၊ premium active)
+    const showWelcome = url.searchParams.get("welcome") === "1" && user && !user.isAdmin && !isExpired(user);
+    return new Response(homePage(slides, sections, user, showWelcome), { headers: { "content-type": "text/html; charset=utf-8" } });
 
   }
 
@@ -2506,9 +2558,10 @@ export async function onRequest(context) {
         ip_prefix: ipNetworkPrefix(clientIp),
         label: shortDeviceLabel(request),
       });
-      // login အောင်မြင်ရင် — next သတ်မှတ်မထားရင် account page (welcome box ပါ) သို့ ပို့မယ်
+      // login အောင်မြင်ရင် — ဝင်လာတဲ့ စာမျက်နှာ (next) ဆီ ပြန်ပို့ပြီး welcome box ပြဖို့ flag ထည့်
       let dest = safeNext.startsWith("/") ? safeNext : "/";
-      if (dest === "/") dest = "/account?welcome=1";
+      const sep = dest.includes("?") ? "&" : "?";
+      dest = dest + sep + "welcome=1";
       return new Response(null, { status: 302, headers: { "Location": dest, "Set-Cookie": setCookieHeader(COOKIE_NAME, token) } });
     }
   }
