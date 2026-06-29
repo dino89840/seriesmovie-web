@@ -1388,65 +1388,191 @@ function expiredPage(reason = "") {
 }
 
 function accountPage(user, info = "", error = "") {
-  const exp = user.expires_at ? new Date(user.expires_at).toLocaleString("en-GB", { hour12: false, timeZone: "Asia/Yangon" }) : "—";
+  const exp = user.expires_at
+    ? new Date(user.expires_at).toLocaleString("en-GB", { hour12: false, timeZone: "Asia/Yangon" })
+    : "—";
   const remainMs = (user.expires_at || 0) - Date.now();
-  const remainText = remainMs > 0
-    ? `${Math.floor(remainMs / 86400000)} ရက် ${Math.floor((remainMs % 86400000) / 3600000)} နာရီ ${Math.floor((remainMs % 3600000) / 60000)} မိနစ်`
-    : "ကုန်ဆုံးပြီ";
+  const dDays  = remainMs > 0 ? Math.floor(remainMs / 86400000) : 0;
+  const dHours = remainMs > 0 ? Math.floor((remainMs % 86400000) / 3600000) : 0;
+  const dMins  = remainMs > 0 ? Math.floor((remainMs % 3600000) / 60000) : 0;
   const daysLeft = remainMs > 0 ? Math.max(1, Math.ceil(remainMs / 86400000)) : 0;
+  const expired = remainMs <= 0;
+
   const roleBadge = user.role === "paid"
-    ? '<span class="badge badge-paid">PAID</span>'
-    : '<span class="badge badge-trial">TRIAL</span>';
+    ? '<span class="acc-badge paid">PAID</span>'
+    : '<span class="acc-badge trial">TRIAL</span>';
+
   const devices = Array.isArray(user.devices) ? user.devices : [];
   const devRows = devices.map(d => {
-    const seen = d.last_seen ? new Date(d.last_seen).toLocaleString("en-GB", { hour12: false, timeZone: "Asia/Yangon" }) : "—";
-    return `<tr><td>${htmlEscape(d.label || "Device")}</td><td style="white-space:nowrap;font-size:11.5px">${htmlEscape(seen)}</td></tr>`;
+    const seen = d.last_seen
+      ? new Date(d.last_seen).toLocaleString("en-GB", { hour12: false, timeZone: "Asia/Yangon" })
+      : "—";
+    return `<tr>
+      <td>
+        <div class="dev-name">${htmlEscape(d.label || "Device")}</div>
+      </td>
+      <td class="dev-seen">${htmlEscape(seen)}</td>
+    </tr>`;
   }).join("");
 
-  const keySvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="width:26px;height:26px"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></svg>`;
+  // ── premium progress ring percentage (visual only) ──
+  const ringPct = expired ? 0 : Math.min(100, Math.max(6, Math.round((daysLeft > 30 ? 30 : daysLeft) / 30 * 100)));
+
+  const keySvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></svg>`;
+  const clockSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>`;
+  const phoneSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M11 18h2"/></svg>`;
+  const homeSvg  = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>`;
+  const outSvg   = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>`;
+
   const body = `
-<div class="auth-wrap"><div class="auth-card account-card" style="max-width:560px">
-  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px">
-    <div style="display:flex;align-items:center;gap:13px">
-      <span class="key-icon">${keySvg}</span>
-      <div>
-        <h1 style="margin:0;text-align:left;font-size:23px">My Key</h1>
-        <p class="sub" style="margin:5px 0 0;text-align:left;display:flex;align-items:center;gap:7px;flex-wrap:wrap"><code style="color:var(--acc2);font-size:13px;letter-spacing:.5px">${htmlEscape(user.keyId)}</code> ${roleBadge}</p>
+<div class="acc-wrap">
+  <div class="acc-card">
+
+    <!-- header -->
+    <div class="acc-head">
+      <div class="acc-id">
+        <span class="acc-keyicon">${keySvg}</span>
+        <div class="acc-id-text">
+          <h1>My Key</h1>
+          <div class="acc-keycode">
+            <code>${htmlEscape(user.keyId)}</code>
+            ${roleBadge}
+          </div>
+        </div>
+      </div>
+      <a class="acc-back" href="/">${homeSvg}<span>Home</span></a>
+    </div>
+
+    ${info ? `<div class="acc-alert ok">${htmlEscape(info)}</div>` : ""}
+    ${error ? `<div class="acc-alert err">${htmlEscape(error)}</div>` : ""}
+
+    <!-- premium status -->
+    <div class="acc-premium ${expired ? "is-expired" : ""}">
+      <div class="acc-ring" style="--pct:${ringPct}">
+        <div class="acc-ring-in">
+          <span class="acc-ring-num">${expired ? "0" : daysLeft}</span>
+          <span class="acc-ring-lbl">${expired ? "ကုန်" : "Day"}</span>
+        </div>
+      </div>
+      <div class="acc-premium-info">
+        <div class="acc-premium-top">
+          <span class="acc-premium-tag">${clockSvg} Premium ရက်ကျန်</span>
+          <span class="acc-pchip ${expired ? "off" : "on"}">P=${daysLeft}Day</span>
+        </div>
+        <div class="acc-countdown">
+          ${expired
+            ? `<span class="acc-cd-expired">သက်တမ်း ကုန်ဆုံးပြီ</span>`
+            : `<b>${dDays}</b> ရက် <b>${dHours}</b> နာရီ <b>${dMins}</b> မိနစ်`}
+        </div>
+        <div class="acc-expdate">ကုန်ဆုံးမည့်ရက် · ${htmlEscape(exp)} (MMT)</div>
       </div>
     </div>
-    <a href="/" style="color:var(--acc2);text-decoration:none;font-weight:700;font-size:13px;white-space:nowrap">← Home</a>
-  </div>
-  ${info ? `<div class="ok">${htmlEscape(info)}</div>` : ""}
-  ${error ? `<div class="err">${htmlEscape(error)}</div>` : ""}
-  <div class="info" style="display:flex;justify-content:space-between;align-items:center">
-    <div>
-      <div style="font-size:11.5px;color:var(--mut)">Premium ရက်ကျန် <span style="color:var(--ok);font-weight:800">P=${daysLeft}Day</span></div>
-      <div style="font-size:18px;font-weight:700;color:var(--acc2)">${htmlEscape(remainText)}</div>
-      <div style="font-size:11px;color:var(--mut);margin-top:2px">ကုန်ဆုံးမည့်ရက်: ${htmlEscape(exp)} (MMT)</div>
+
+    <!-- devices -->
+    <div class="acc-section">
+      <div class="acc-section-head">
+        <span class="acc-section-title">${phoneSvg} ချိတ်ဆက်ထားသော Device</span>
+        <span class="acc-dev-count">${devices.length}/${MAX_DEVICES_PER_KEY}</span>
+      </div>
+      <div class="acc-dev-table">
+        <table>
+          <thead><tr><th>Device</th><th>Last seen</th></tr></thead>
+          <tbody>${devRows || '<tr><td colspan="2" class="acc-dev-empty">Device မရှိသေးပါ</td></tr>'}</tbody>
+        </table>
+      </div>
     </div>
+
+    <!-- footer actions -->
+    <div class="acc-actions">
+      <a class="acc-btn home" href="/">${homeSvg}<span>Home</span></a>
+      <a class="acc-btn out" href="/logout">${outSvg}<span>ဤ Device မှ ထွက်ရန်</span></a>
+    </div>
+
   </div>
-  <h3 style="margin:24px 0 10px;font-size:15px">ချိတ်ဆက်ထားသော Device (${devices.length}/${MAX_DEVICES_PER_KEY})</h3>
-  <div style="overflow:auto;border:1px solid var(--line);border-radius:11px">
-    <table style="width:100%;border-collapse:collapse;font-size:12.5px">
-      <thead><tr style="background:#131f33;text-align:left"><th>Device</th><th>Last seen</th></tr></thead>
-      <tbody>${devRows || '<tr><td colspan="2" style="padding:18px;text-align:center;color:var(--mut)">Device မရှိသေးပါ</td></tr>'}</tbody>
-    </table>
-  </div>
-  <div style="margin-top:20px;text-align:center">
-    <a href="/" style="color:var(--acc2);text-decoration:none;font-weight:700;margin-right:18px">🏠 Home</a>
-    <a href="/logout" style="color:#f88;text-decoration:none;font-weight:700">ဤ Device မှ ထွက်ရန်</a>
-  </div>
-</div></div>
-<style>th,td{padding:8px 10px;border-bottom:1px solid var(--line)}th{font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.5px}</style>`;
-  const accountExtraCss = `
-    .account-card .key-icon{width:52px;height:52px;flex:0 0 52px;border-radius:15px;display:flex;align-items:center;justify-content:center;color:#fff;background:linear-gradient(140deg,#ff3a3f,#e50914 55%,#a3060d);box-shadow:0 6px 18px rgba(229,9,20,.45),inset 0 1px 0 rgba(255,255,255,.25)}
-    .account-card .info{background:linear-gradient(135deg,#0d2a1a,#0e1830);border:1px solid #1f5a38;border-radius:14px;padding:16px}
-    .account-card .badge-paid{background:linear-gradient(135deg,#0f9d58,#22c55e);color:#fff;box-shadow:0 2px 8px rgba(34,197,94,.4)}
-    .account-card .badge-trial{background:linear-gradient(135deg,#f59e0b,#fbbf24);color:#2a1700}
-    .account-card table thead tr{background:linear-gradient(90deg,#15192e,#1a1430)}
+</div>`;
+
+  const accCss = `
+    .acc-wrap{min-height:100vh;display:flex;align-items:flex-start;justify-content:center;padding:26px 16px 40px}
+    .acc-card{width:100%;max-width:560px;background:linear-gradient(180deg,rgba(17,23,42,.96),rgba(11,15,28,.96));
+      border:1px solid var(--line);border-radius:22px;padding:26px;box-shadow:0 24px 70px rgba(0,0,0,.6)}
+    .acc-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:20px}
+    .acc-id{display:flex;align-items:center;gap:14px;min-width:0}
+    .acc-keyicon{width:54px;height:54px;flex:0 0 54px;border-radius:16px;display:flex;align-items:center;justify-content:center;color:#fff;
+      background:linear-gradient(140deg,#ff3a3f,#e50914 55%,#a3060d);
+      box-shadow:0 8px 22px rgba(229,9,20,.5),inset 0 1px 0 rgba(255,255,255,.3)}
+    .acc-keyicon svg{width:27px;height:27px}
+    .acc-id-text{min-width:0}
+    .acc-id-text h1{margin:0;font-size:23px;font-weight:900;letter-spacing:.3px}
+    .acc-keycode{display:flex;align-items:center;gap:8px;margin-top:5px;flex-wrap:wrap}
+    .acc-keycode code{color:var(--acc2);font-size:13px;letter-spacing:1px;font-weight:700}
+    .acc-badge{font-size:10.5px;font-weight:900;padding:3px 9px;border-radius:6px;letter-spacing:.6px}
+    .acc-badge.paid{background:linear-gradient(135deg,#0f9d58,#22c55e);color:#04210f}
+    .acc-badge.trial{background:linear-gradient(135deg,#f59e0b,#fbbf24);color:#2a1700}
+    .acc-back{display:inline-flex;align-items:center;gap:6px;text-decoration:none;color:var(--mut);font-weight:700;font-size:13px;
+      padding:8px 13px;border:1px solid var(--line);border-radius:10px;transition:.15s;white-space:nowrap}
+    .acc-back svg{width:15px;height:15px}
+    .acc-back:hover{color:#fff;border-color:var(--acc2)}
+
+    .acc-alert{padding:11px 14px;border-radius:11px;margin-bottom:14px;font-size:13.5px;line-height:1.5}
+    .acc-alert.ok{background:#10331a;border:1px solid #225a30;color:#cfc}
+    .acc-alert.err{background:#3a1020;border:1px solid #6a2030;color:#ffd}
+
+    .acc-premium{display:flex;align-items:center;gap:20px;padding:20px;border-radius:18px;
+      background:linear-gradient(135deg,rgba(15,42,26,.7),rgba(14,24,48,.7));border:1px solid #1f5a38;margin-bottom:22px}
+    .acc-premium.is-expired{background:linear-gradient(135deg,rgba(58,16,32,.7),rgba(24,16,30,.7));border-color:#6a2030}
+    .acc-ring{width:92px;height:92px;flex:0 0 92px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+      background:conic-gradient(var(--ok) calc(var(--pct,0)*1%),rgba(255,255,255,.08) 0);position:relative}
+    .acc-premium.is-expired .acc-ring{background:conic-gradient(#f66 calc(var(--pct,0)*1%),rgba(255,255,255,.08) 0)}
+    .acc-ring-in{width:72px;height:72px;border-radius:50%;background:#0b0f1c;display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1}
+    .acc-ring-num{font-size:28px;font-weight:900;color:#fff}
+    .acc-ring-lbl{font-size:11px;color:var(--mut);font-weight:700;margin-top:3px}
+    .acc-premium-info{flex:1;min-width:0}
+    .acc-premium-top{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+    .acc-premium-tag{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--mut);font-weight:700}
+    .acc-premium-tag svg{width:14px;height:14px}
+    .acc-pchip{font-size:12px;font-weight:900;padding:3px 10px;border-radius:7px;letter-spacing:.4px}
+    .acc-pchip.on{background:linear-gradient(135deg,#0f9d58,#22c55e);color:#fff}
+    .acc-pchip.off{background:#3a2530;color:#f88}
+    .acc-countdown{font-size:18px;font-weight:700;color:#eef2ff}
+    .acc-countdown b{color:var(--acc2);font-size:21px;font-weight:900}
+    .acc-cd-expired{color:#f88;font-size:17px;font-weight:800}
+    .acc-expdate{font-size:11.5px;color:var(--mut);margin-top:6px}
+
+    .acc-section{margin-bottom:22px}
+    .acc-section-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:11px}
+    .acc-section-title{display:inline-flex;align-items:center;gap:8px;font-size:15px;font-weight:800}
+    .acc-section-title svg{width:17px;height:17px;color:var(--acc2)}
+    .acc-dev-count{font-size:12px;font-weight:800;color:#cef;background:#15203a;padding:4px 11px;border-radius:20px;border:1px solid var(--line)}
+    .acc-dev-table{border:1px solid var(--line);border-radius:13px;overflow:hidden}
+    .acc-dev-table table{width:100%;border-collapse:collapse;font-size:13px}
+    .acc-dev-table thead tr{background:linear-gradient(90deg,#15192e,#1a1430)}
+    .acc-dev-table th{text-align:left;padding:10px 14px;font-size:10.5px;color:var(--mut);text-transform:uppercase;letter-spacing:.6px;font-weight:800}
+    .acc-dev-table td{padding:12px 14px;border-top:1px solid var(--line)}
+    .dev-name{font-weight:600;color:#e7ecf8}
+    .dev-seen{white-space:nowrap;font-size:12px;color:var(--mut)}
+    .acc-dev-empty{text-align:center;color:var(--mut);padding:20px !important}
+
+    .acc-actions{display:flex;gap:10px}
+    .acc-btn{flex:1;display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:13px;border-radius:12px;
+      text-decoration:none;font-weight:800;font-size:14px;transition:.16s}
+    .acc-btn svg{width:17px;height:17px}
+    .acc-btn.home{background:linear-gradient(135deg,var(--acc),var(--acc2));color:#fff;box-shadow:0 6px 16px rgba(229,9,20,.35)}
+    .acc-btn.home:hover{filter:brightness(1.08);transform:translateY(-1px)}
+    .acc-btn.out{background:#1a1320;color:#f88;border:1px solid #5a2030}
+    .acc-btn.out:hover{background:#241622;transform:translateY(-1px)}
+
+    @media(max-width:480px){
+      .acc-card{padding:20px}
+      .acc-premium{flex-direction:column;text-align:center;gap:16px}
+      .acc-premium-top{justify-content:center}
+      .acc-countdown{font-size:16px}
+      .acc-actions{flex-direction:column}
+    }
   `;
-  return pageShell("My Key — CM FLIX", body, { extraCss: AUTH_CSS + accountExtraCss });
+
+  return pageShell("My Key — CM FLIX", body, { extraCss: AUTH_CSS + accCss });
 }
+
 
 /* ══════════════════════════════════════════════════
    ADMIN PAGE
@@ -1564,7 +1690,7 @@ function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], i
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
           <div><label>Category</label>
             <select name="type" id="addType" onchange="cmToggleType(this.value,'add')">
-              <option value="r mosaic">🎬 Movie</option>
+              <option value="r mosaic">🎬 R Mosaic</option>
               <option value="series">📺 Series</option>
               <option value="adult">🔞 21+ mmsub</option>
               <option value="random">⭐ Random Best</option>
