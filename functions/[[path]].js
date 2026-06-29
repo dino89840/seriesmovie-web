@@ -20,6 +20,10 @@ const CSRF_COOKIE      = "__Host-cmflix_csrf";
 const MAX_DEVICES_PER_KEY = 2;
 const KEY_PREFIX       = "CM";
 
+// ── Contact (Admin) ──
+const CONTACT_TELEGRAM = "iqowoq";          // @ မပါဘဲ username ပဲ
+const CONTACT_VIBER    = "09688171999";     // Viber phone number
+
 // ── Signed stream URL ──
 const STREAM_TTL_SEC   = 6 * 3600;
 
@@ -820,6 +824,13 @@ const CMFLIX_CSS = `
   .empty{grid-column:1/-1;text-align:center;color:var(--mut);padding:54px 16px;font-size:14px}
   .footer{text-align:center;color:var(--mut);font-size:12px;padding:36px 16px 28px;border-top:1px solid var(--line);margin-top:32px}
   .footer b{color:var(--acc)}
+  .contact-row{display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;margin-bottom:6px}
+  .contact-lbl{font-size:13px;color:var(--mut);font-weight:600}
+  .contact-btn{display:inline-flex;align-items:center;gap:7px;text-decoration:none;font-weight:700;font-size:13px;padding:9px 16px;border-radius:10px;color:#fff;transition:.15s}
+  .contact-btn:hover{transform:translateY(-2px);filter:brightness(1.1)}
+  .contact-btn.tg{background:linear-gradient(135deg,#229ED9,#37b6ee);box-shadow:0 4px 12px rgba(34,158,217,.35)}
+  .contact-btn.vb{background:linear-gradient(135deg,#7360f2,#8f7bff);box-shadow:0 4px 12px rgba(115,96,242,.35)}
+  @media(max-width:560px){.contact-lbl{width:100%;margin-bottom:4px}}
 
   /* ── Random Best: 2-up cover layout (Viki style) ── */
   .cover-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
@@ -947,8 +958,28 @@ function topBar(activeCat = "", query = "", user = null) {
 </div>`;
 }
 
+function contactButtons() {
+  const tg = `https://t.me/${encodeURIComponent(CONTACT_TELEGRAM)}`;
+  const vb = `viber://chat?number=${encodeURIComponent("%2B95" + CONTACT_VIBER.replace(/^0/, ""))}`;
+  return `
+  <div class="contact-row">
+    <span class="contact-lbl">Key ဝယ်ရန် / အကူအညီ —</span>
+    <a class="contact-btn tg" href="${tg}" target="_blank" rel="noopener">
+      <svg viewBox="0 0 24 24" fill="currentColor" style="width:16px;height:16px"><path d="M9.04 15.6 8.7 20.3c.5 0 .72-.21.98-.47l2.36-2.25 4.9 3.58c.9.5 1.54.24 1.78-.83l3.23-15.13.001-.001c.28-1.34-.48-1.86-1.36-1.53L2.2 9.86c-1.3.5-1.28 1.23-.22 1.56l4.95 1.54L18.4 6.1c.54-.36 1.03-.16.63.2"/></svg>
+      Telegram
+    </a>
+    <a class="contact-btn vb" href="${vb}" target="_blank" rel="noopener">
+      <svg viewBox="0 0 24 24" fill="currentColor" style="width:16px;height:16px"><path d="M12 2C6.5 2 2 6.04 2 11.02c0 2.2.9 4.2 2.4 5.74l-.9 3.5 3.7-1.2c1.5.7 3.1 1.06 4.8 1.06 5.5 0 10-4.04 10-9.02S17.5 2 12 2z"/></svg>
+      Viber
+    </a>
+  </div>`;
+}
+
 function footer() {
-  return `<div class="footer">© ${new Date().getFullYear()} <b>CM FLIX</b> · All rights reserved.</div>`;
+  return `<div class="footer">
+    ${contactButtons()}
+    <div style="margin-top:14px">© ${new Date().getFullYear()} <b>CM FLIX</b> · All rights reserved.</div>
+  </div>`;
 }
 
 function cardHtml(it) {
@@ -1522,6 +1553,7 @@ function keyLoginPage(csrfToken, error = "", info = "", nextUrl = "/") {
     <button type="submit" class="btn">ဝင်မယ်</button>
   </form>
   <div class="note">Key တစ်ခုလျှင် ဖုန်း ${MAX_DEVICES_PER_KEY} လုံးအထိ သုံးနိုင်သည်</div>
+  <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--line)">${contactButtons()}</div>
 </div></div>`;
   const script = `
 (function(){
@@ -1546,6 +1578,7 @@ function expiredPage(reason = "") {
   <h1>Key Expired</h1>
   <p class="sub">${htmlEscape(msg)}</p>
   <a class="btn" href="/login" style="display:block;text-align:center;text-decoration:none;margin-top:10px">Key အသစ်ထည့်ရန်</a>
+  <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--line)">${contactButtons()}</div>
 </div></div>`;
   return pageShell("Expired — CM FLIX", body, { extraCss: AUTH_CSS });
 }
@@ -1881,7 +1914,7 @@ function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], i
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
           <div><label>Category</label>
             <select name="type" id="addType" onchange="cmToggleType(this.value,'add')">
-              <option value="r mosaic">🎬 R Mosaic</option>
+              <option value="movie">🎬 R Mosaic</option>
               <option value="series">📺 Series</option>
               <option value="adult">🔞 21+ mmsub</option>
               <option value="random">⭐ Random Best</option>
@@ -2371,12 +2404,15 @@ export async function onRequest(context) {
     // cache key က real-url + range ပေါ်မူတည်တယ် (signed/session token မပါ → cache hit များတယ်)
     const cache = caches.default;
     let cacheKey = null;
-    const cacheable = v.d !== 1; // download ကို cache မလုပ်ဘူး
+    // download မဟုတ်တဲ့ stream တွေထဲက — ဗီဒီယိုအစ (bytes=0-) နဲ့ full request ကိုသာ cache
+    // (ကြားက seek byte တွေကို cache မလုပ်ဘူး → cache entry မပေါက်ကွဲ + seek bug မရှိ)
+    const isInitialChunk = !rangeHeader || /^bytes=0-/i.test(rangeHeader);
+    const cacheable = v.d !== 1 && isInitialChunk;
     if (cacheable) {
       const ckUrl = new URL(request.url);
       ckUrl.search = ""; // signed params တွေ ဖယ်
-      ckUrl.searchParams.set("rk", real);                       // real source key
-      ckUrl.searchParams.set("rg", rangeHeader || "full");      // range key
+      ckUrl.searchParams.set("rk", real);                  // real source key
+      ckUrl.searchParams.set("rg", rangeHeader || "full"); // bytes=0- (သို့) full
       cacheKey = new Request(ckUrl.toString(), { method: "GET" });
       const cached = await cache.match(cacheKey);
       if (cached) {
