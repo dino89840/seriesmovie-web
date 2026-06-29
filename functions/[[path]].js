@@ -573,12 +573,25 @@ async function addBookmark(env, keyId, itemId) {
   ).bind(keyId, itemId, Date.now()).run();
 }
 
-async function removeBookmark(env, keyId, itemId) {
+/* ══════════════════════════════════════════════════
+   BOOKMARKS  (D1: table `bookmarks`)
+   ══════════════════════════════════════════════════ */
+async function isBookmarked(env, keyId, itemId) {
+  if (!keyId || !itemId) return false;
+  const row = await db(env).prepare(
+    "SELECT item_id FROM bookmarks WHERE key_id=? AND item_id=?"
+  ).bind(keyId, itemId).first();
+  return row !== null;
+}
+
+async function addBookmark(env, keyId, itemId) {
   if (!keyId || !itemId) return;
   await db(env).prepare(
-    "DELETE FROM bookmarks WHERE key_id=? AND item_id=?"
-  ).bind(keyId, itemId).run();
+    `INSERT INTO bookmarks (key_id, item_id, created_at) VALUES (?,?,?)
+     ON CONFLICT(key_id, item_id) DO NOTHING`
+  ).bind(keyId, itemId, Date.now()).run();
 }
+
 async function removeBookmark(env, keyId, itemId) {
   if (!keyId || !itemId) return;
   await db(env).prepare(
@@ -611,6 +624,7 @@ async function listBookmarks(env, keyId) {
     created_at: r.created_at || 0,
   }));
 }
+
 
 /* ══════════════════════════════════════════════════
    SESSIONS  (D1: table `sessions`)
