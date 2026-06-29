@@ -7,7 +7,7 @@
 //  • Categories: R Mosaic / Series / 21+ mmsub (Series: Season → Episode)
 //  • Slider supports separate landscape banner image (slide_image)
 //  • Modern Plyr player + polished UI / logo
-//  • My Key chip shows premium days-left (P=NDay) when logged in
+//  • My Key chip shows premium days-left (P-NDay) when logged in
 //  • TMDB API integration (auto-fetch poster/backdrop/overview)
 // ════════════════════════════════════════════════════════════════
 
@@ -523,7 +523,7 @@ function htmlEscape(s) {
 }
 
 /* ══════════════════════════════════════════════════
-   MY KEY LABEL — Premium ရက်ကျန် တွက်ပြီး P=NDay format
+   MY KEY LABEL — Premium ရက်ကျန် တွက်ပြီး P-NDay format
    ══════════════════════════════════════════════════ */
 function premiumLabel(user) {
   // login မဝင် → "My Key"
@@ -531,9 +531,9 @@ function premiumLabel(user) {
   if (user.isAdmin) return { text: "Admin", premium: true };
   const remainMs = (user.expires_at || 0) - Date.now();
   if (remainMs <= 0) return { text: "Expired", premium: false };
-  // 1 ရက်အောက်ဆို အနည်းဆုံး 1 ရက်ပြ (ဥပမာ နာရီပိုင်းကျန်ရင်လည်း P=1Day)
+  // 1 ရက်အောက်ဆို အနည်းဆုံး 1 ရက်ပြ (ဥပမာ နာရီပိုင်းကျန်ရင်လည်း P-1Day)
   const days = Math.max(1, Math.ceil(remainMs / 86400000));
-  return { text: `P=${days}Day`, premium: true };
+  return { text: `P-${days}Day`, premium: true };
 }
 
 /* Rate limit (D1: table `rate_limits`) */
@@ -1457,7 +1457,7 @@ function accountPage(user, info = "", error = "") {
       <div class="acc-premium-info">
         <div class="acc-premium-top">
           <span class="acc-premium-tag">${clockSvg} Premium ရက်ကျန်</span>
-          <span class="acc-pchip ${expired ? "off" : "on"}">P=${daysLeft}Day</span>
+          <span class="acc-pchip ${expired ? "off" : "on"}">P-${daysLeft}Day</span>
         </div>
         <div class="acc-countdown">
           ${expired
