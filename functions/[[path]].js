@@ -4,7 +4,7 @@
 //  • Storage: Cloudflare D1 (SQLite)  — binding name: DB
 //  • Signed / expiring URL streaming (real R2/mp4 link NEVER in HTML)
 //  • Key-only login (admin-created keys, device-limited)
-//  • Categories: R Mosaic / Series / 21+  (Series: Season → Episode)
+//  • Categories: R Mosaic / Series / 21+ mmsub (Series: Season → Episode)
 //  • Slider supports separate landscape banner image (slide_image)
 //  • Modern Plyr player + polished UI / logo
 //  • My Key chip shows premium days-left (P=NDay) when logged in
@@ -39,7 +39,7 @@ const TMDB_BACKDROP_SIZE = "w1280";  // အလျားလိုက် slide ban
 const CATEGORIES = {
   movie:  { id: "movie",  name: "R Mosaic",  icon: "" },
   series: { id: "series", name: "Series",  icon: "" },
-  adult:  { id: "adult",  name: "21+",     icon: "" },
+  adult:  { id: "adult",  name: "21+ mmsub",     icon: "" },
   random: { id: "random", name: "Random Best", icon: "" },
 };
 function isValidCategory(c) { return c === "movie" || c === "series" || c === "adult" || c === "random"; }
@@ -893,7 +893,7 @@ function topBar(activeCat = "", query = "", user = null) {
     <a class="${activeCat === "" ? "on" : ""}" href="/">${getSvgIcon("home")} Home</a>
     <a class="${activeCat === "movie" ? "on" : ""}" href="/category/movie">${getSvgIcon("movie")} R Mosaic</a>
     <a class="${activeCat === "series" ? "on" : ""}" href="/category/series">${getSvgIcon("series")} Series</a>
-    <a class="${activeCat === "adult" ? "on" : ""}" href="/category/adult">${getSvgIcon("adult")} 21+</a>
+    <a class="${activeCat === "adult" ? "on" : ""}" href="/category/adult">${getSvgIcon("adult")} 21+ mmsub</a>
     <a class="${activeCat === "random" ? "on" : ""}" href="/category/random">${getSvgIcon("random")} Random Best</a>
   </nav>
 </div>`;
@@ -1564,9 +1564,9 @@ function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], i
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
           <div><label>Category</label>
             <select name="type" id="addType" onchange="cmToggleType(this.value,'add')">
-              <option value="movie">🎬 Movie</option>
+              <option value="r mosaic">🎬 Movie</option>
               <option value="series">📺 Series</option>
-              <option value="adult">🔞 21+</option>
+              <option value="adult">🔞 21+ mmsub</option>
               <option value="random">⭐ Random Best</option>
             </select>
           </div>
@@ -1594,9 +1594,9 @@ function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], i
     <input type="search" name="itq" value="${htmlEscape(itQuery)}" placeholder="🔍 title / id ရှာရန်…" style="flex:1;min-width:180px">
     <select name="ittype" style="width:auto">
       <option value="">All</option>
-      <option value="movie" ${itType === "movie" ? "selected" : ""}>🎬 Movie</option>
+      <option value="movie" ${itType === "movie" ? "selected" : ""}>🎬 R Mosaic</option>
       <option value="series" ${itType === "series" ? "selected" : ""}>📺 Series</option>
-      <option value="adult" ${itType === "adult" ? "selected" : ""}>🔞 21+</option>
+      <option value="adult" ${itType === "adult" ? "selected" : ""}>🔞 21+ mmsub</option>
       <option value="random" ${itType === "random" ? "selected" : ""}>⭐ Random Best</option>
     </select>
     <input type="hidden" name="itpage" value="1">
@@ -1728,9 +1728,9 @@ function adminEditPage(item, csrfToken, error = "") {
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
       <div><label>Category</label>
         <select name="type" onchange="cmToggleType(this.value,'edit')">
-          <option value="movie" ${item.type === "movie" ? "selected" : ""}>🎬 Movie</option>
+          <option value="movie" ${item.type === "movie" ? "selected" : ""}>🎬 R Mosaic</option>
           <option value="series" ${item.type === "series" ? "selected" : ""}>📺 Series</option>
-          <option value="adult" ${item.type === "adult" ? "selected" : ""}>🔞 21+</option>
+          <option value="adult" ${item.type === "adult" ? "selected" : ""}>🔞 21+ mmsub</option>
           <option value="random" ${item.type === "random" ? "selected" : ""}>⭐ Random Best</option>
         </select>
       </div>
