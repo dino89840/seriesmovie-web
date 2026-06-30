@@ -485,6 +485,7 @@ function rowToItem(row) {
     created_at: row.created_at || 0,
     video_url: row.video_url || "",
     download_url: row.download_url || "",
+    published: (row.published == null ? 1 : (row.published ? 1 : 0)),
   };
   if (item.type === "series") {
     try { item.seasons = JSON.parse(row.seasons || "[]"); } catch (_) { item.seasons = []; }
@@ -501,13 +502,14 @@ async function getItem(env, id) {
 
 async function putItem(env, id, data) {
   await db(env).prepare(
-    `INSERT INTO items (id, type, title, poster, slide_image, note, actress, created_at, video_url, download_url, seasons)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?)
+    `INSERT INTO items (id, type, title, poster, slide_image, note, actress, created_at, video_url, download_url, seasons, published)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
      ON CONFLICT(id) DO UPDATE SET
        type=excluded.type, title=excluded.title, poster=excluded.poster,
        slide_image=excluded.slide_image, note=excluded.note, actress=excluded.actress,
        created_at=excluded.created_at,
-       video_url=excluded.video_url, download_url=excluded.download_url, seasons=excluded.seasons`
+       video_url=excluded.video_url, download_url=excluded.download_url, seasons=excluded.seasons,
+       published=excluded.published`
   ).bind(
     id,
     data.type || "movie",
@@ -519,7 +521,8 @@ async function putItem(env, id, data) {
     data.created_at || 0,
     data.video_url || "",
     data.download_url || "",
-    data.type === "series" ? JSON.stringify(data.seasons || []) : ""
+    data.type === "series" ? JSON.stringify(data.seasons || []) : "",
+    (data.published == null ? 1 : (data.published ? 1 : 0))
   ).run();
 }
 
@@ -528,10 +531,13 @@ async function deleteItem(env, id) {
 }
 
 // All item summaries (metadata only)
-async function listItems(env) {
-  const res = await db(env).prepare(
-    "SELECT id, title, poster, slide_image, type, actress, created_at FROM items ORDER BY created_at DESC"
-  ).all();
+// includeUnpublished=false (default) → public pages (home/category/search) — published ဖြစ်တာသာ ပြ
+// includeUnpublished=true → admin pages — draft အပါအဝင် အားလုံး ပြ
+async function listItems(env, includeUnpublished = false) {
+  const sql = includeUnpublished
+    ? "SELECT id, title, poster, slide_image, type, actress, created_at, published FROM items ORDER BY created_at DESC"
+    : "SELECT id, title, poster, slide_image, type, actress, created_at, published FROM items WHERE published=1 ORDER BY created_at DESC";
+  const res = await db(env).prepare(sql).all();
   return (res.results || []).map(r => ({
     id: r.id,
     title: r.title || "",
@@ -540,7 +546,22 @@ async function listItems(env) {
     type: r.type || "movie",
     actress: r.actress || "",
     created_at: r.created_at || 0,
+    published: (r.published == null ? 1 : (r.published ? 1 : 0)),
   }));
+}
+
+// Draft (မတင်ရသေး) items အရေအတွက် တွက်
+async function countDraftItems(env) {
+  try {
+    const row = await db(env).prepare("SELECT COUNT(*) AS c FROM items WHERE published=0").first();
+    return (row && row.c) ? row.c : 0;
+  } catch (_) { return 0; }
+}
+
+// Draft items အားလုံးကို တစ်ခါတည်း publish (published=1) လုပ်
+async function publishAllDrafts(env) {
+  const res = await db(env).prepare("UPDATE items SET published=1 WHERE published=0").run();
+  return (res.meta && res.meta.changes) ? res.meta.changes : 0;
 }
 // actress slug တစ်ခုနဲ့ ဆိုင်တဲ့ items အားလုံး
 async function listItemsByActressSlug(env, slug) {
@@ -1458,6 +1479,7 @@ function watchPage(item, user, gated, streams, bookmarked = false, actresses = [
     playerArea = `
       <div class="player-box">
         <video id="cmPlayer" playsinline crossorigin preload="none" poster="${posterImg}"></video>
+        <div class="cm-loading" id="cmLoading"><div class="cm-ring"></div></div>
         <div class="poster-cover" id="posterCover" style="background-image:url('${posterImg}')">
           <div class="poster-cover-play"><span>▶</span></div>
         </div>
@@ -1469,6 +1491,7 @@ function watchPage(item, user, gated, streams, bookmarked = false, actresses = [
       <div class="player-box">
         <video id="cmPlayer" playsinline crossorigin preload="none" poster="${posterImg}"
           data-video="${htmlEscape(st.video || "")}" data-dl="${htmlEscape(st.dl || "")}"></video>
+        <div class="cm-loading" id="cmLoading"><div class="cm-ring"></div></div>
         <div class="poster-cover" id="posterCover" style="background-image:url('${posterImg}')">
           <div class="poster-cover-play"><span>▶</span></div>
         </div>
@@ -1492,6 +1515,14 @@ function watchPage(item, user, gated, streams, bookmarked = false, actresses = [
     .poster-cover{position:absolute;inset:0;z-index:10;cursor:pointer;background-size:cover;background-position:center center;background-repeat:no-repeat;background-color:#080c18;display:flex;align-items:center;justify-content:center;transition:opacity .25s}
     .poster-cover.hide{display:none}
     .poster-cover-play{display:none}
+    /* ── Loading spinner overlay (Play နှိပ်ပြီး buffer လုပ်နေချိန် ပြ) ── */
+    .cm-loading{position:absolute;inset:0;z-index:15;display:none;align-items:center;justify-content:center;
+      background:rgba(0,0,0,.42);backdrop-filter:blur(1px);pointer-events:none}
+    .cm-loading.show{display:flex}
+    .cm-loading .cm-ring{width:58px;height:58px;border-radius:50%;
+      border:4px solid rgba(255,255,255,.18);border-top-color:var(--acc2);
+      animation:cmSpin .8s linear infinite;box-shadow:0 4px 20px rgba(0,0,0,.4)}
+    @keyframes cmSpin{to{transform:rotate(360deg)}}
     .meta-title{font-size:25px;font-weight:900;margin:0 0 8px}
     .meta-cat{display:inline-block;font-size:11px;font-weight:800;padding:4px 11px;border-radius:7px;background:#131b2e;margin-bottom:12px;letter-spacing:.4px}
     .meta-note{color:#cfd6e8;font-size:14px;line-height:1.75;margin:0 0 18px;white-space:pre-wrap}
@@ -1635,7 +1666,11 @@ ${footer()}`;
   var btnDl=document.getElementById('btnDl');
   var emptyEl=document.getElementById('playerEmpty');
   var nowEl=document.getElementById('nowPlaying');
+  var loadEl=document.getElementById('cmLoading');
   var cur={video:'',dl:'',title:''};
+
+  function showLoading(){ if(loadEl) loadEl.classList.add('show'); }
+  function hideLoading(){ if(loadEl) loadEl.classList.remove('show'); }
 
   // ── Custom toast box (browser alert အစား) ──
   var toastEl=document.getElementById('cmToast');
@@ -1679,15 +1714,35 @@ ${footer()}`;
           screen.orientation.unlock();
         }
       });
+      // ── Loading spinner — buffer/seek လုပ်နေချိန် ပြ၊ ဖွင့်လို့ရရင် ဖျောက် ──
+      player.on('waiting', showLoading);
+      player.on('seeking', showLoading);
+      player.on('stalled', showLoading);
+      player.on('loadstart', showLoading);
+      player.on('canplay', hideLoading);
+      player.on('playing', hideLoading);
+      player.on('seeked', hideLoading);
+      player.on('error', hideLoading);
       if(GATED){
         player.on('play',function(){ player.pause(); gateMsg(); });
       }
+    } else if (v) {
+      // Plyr မရှိရင် native video element event တွေ သုံး
+      v.addEventListener('waiting', showLoading);
+      v.addEventListener('seeking', showLoading);
+      v.addEventListener('stalled', showLoading);
+      v.addEventListener('loadstart', showLoading);
+      v.addEventListener('canplay', hideLoading);
+      v.addEventListener('playing', hideLoading);
+      v.addEventListener('seeked', hideLoading);
+      v.addEventListener('error', hideLoading);
     }
   }
 
   function revealPlayer(){
     if(coverEl) coverEl.classList.add('hide');
     initPlayer();
+    showLoading();  // Play နှိပ်တာနဲ့ ချက်ချင်း spinner ပြ (buffer လုပ်နေတယ်ဆိုတာ သိစေဖို့)
   }
 
   function gateMsg(){
@@ -2070,7 +2125,7 @@ function accountPage(user, info = "", error = "", showWelcome = false) {
 /* ══════════════════════════════════════════════════
    ADMIN PAGE
    ══════════════════════════════════════════════════ */
-function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], itPage = 1, itTotalPages = 1, itQuery = "", itTotal = 0, itType = "", tmdbOn = false) {
+function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], itPage = 1, itTotalPages = 1, itQuery = "", itTotal = 0, itType = "", tmdbOn = false, draftCount = 0) {
   const keyRows = keys.map(k => {
     const exp = k.expires_at ? new Date(k.expires_at).toLocaleString("en-GB", { hour12: false, timeZone: "Asia/Yangon" }) : "—";
     const active = (k.expires_at && Date.now() < k.expires_at && !k.disabled);
@@ -2112,11 +2167,15 @@ function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], i
 
   const itemRows = items.map(m => {
     const cat = CATEGORIES[m.type] || CATEGORIES.movie;
-    return `<tr>
+    const isDraft = m.published === 0;
+    const statusBadge = isDraft
+      ? '<span class="badge" style="background:#5a3a10;color:#ffcf80">⏳ DRAFT</span>'
+      : '<span class="badge" style="background:#103a1a;color:#7df0a8">● LIVE</span>';
+    return `<tr ${isDraft ? 'style="background:#1a1408"' : ''}>
       <td style="width:54px"><div class="thumb" style="background-image:url('${htmlEscape(m.poster || "")}')">${m.poster ? "" : "🎬"}</div></td>
       <td><a href="/watch/${htmlEscape(m.id)}" target="_blank" style="color:#cef;text-decoration:none;font-weight:600">${htmlEscape(m.title || "Untitled")}</a>
         <div style="font-size:10.5px;color:var(--mut)"><code>${htmlEscape(m.id)}</code>${m.slide_image ? ' · 🖼️ slide' : ''}</div></td>
-      <td><span class="badge" style="background:#1a2540;color:#cde">${cat.icon} ${htmlEscape(cat.name)}</span></td>
+      <td><span class="badge" style="background:#1a2540;color:#cde">${cat.icon} ${htmlEscape(cat.name)}</span><br>${statusBadge}</td>
       <td style="white-space:nowrap;font-size:11.5px">${m.created_at ? new Date(m.created_at).toLocaleDateString("en-GB", { timeZone: "Asia/Yangon" }) : "—"}</td>
       <td>
         <a class="btn-ext" href="/admin/edit/${htmlEscape(m.id)}" style="text-decoration:none">Edit</a>
@@ -2214,8 +2273,25 @@ function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], i
 </div>
         <div><label>Note / ဖော်ပြချက် (optional)</label><textarea name="note" id="addNote" placeholder="ဇာတ်လမ်းအကျဉ်း…" style="min-height:80px"></textarea></div>
       </div>
-      <button type="submit" class="btn" style="margin-top:14px">တင်မယ်</button>
+      <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap">
+        <button type="submit" name="save_mode" value="draft" class="btn" style="flex:1;min-width:160px;background:linear-gradient(135deg,#5a3a10,#8a5a14)">📥 Draft အဖြစ်သိမ်းမယ် (မပြသေး)</button>
+        <button type="submit" name="save_mode" value="publish" class="btn" style="flex:1;min-width:160px">🚀 တန်းတင်မယ် (Publish)</button>
+      </div>
+      <div style="font-size:11.5px;color:var(--mut);margin-top:8px;line-height:1.6">💡 <b>Draft</b> ဆို သိမ်းထားရုံပါ — Home/Category တွေမှာ မပေါ်သေးပါ။ ကြိုက်တဲ့ကားအရေအတွက် Draft နဲ့ စုထားပြီး အောက်က <b>"Publish All Drafts"</b> ခလုတ်နဲ့ တစ်ခါတည်း အကုန်တင်နိုင်ပါတယ်။</div>
     </form>
+  </div>
+
+  <!-- ════ PUBLISH ALL DRAFTS BAR ════ -->
+  <div style="background:${draftCount > 0 ? '#1a1408' : '#0e1830'};border:1px solid ${draftCount > 0 ? '#5a3a10' : 'var(--line)'};border-radius:13px;padding:16px;margin-bottom:18px;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap">
+    <div>
+      <div style="font-weight:800;color:${draftCount > 0 ? '#ffcf80' : '#cef'};font-size:15px">⏳ Draft အရေအတွက်: ${draftCount} ကား</div>
+      <div style="font-size:12px;color:var(--mut);margin-top:4px">${draftCount > 0 ? 'အောက်က ခလုတ်နှိပ်ရင် Draft အားလုံးကို တစ်ခါတည်း Publish (တင်) လုပ်ပါမယ်။' : 'မတင်ရသေးတဲ့ Draft မရှိသေးပါ။'}</div>
+    </div>
+    ${draftCount > 0 ? `
+    <form method="POST" action="/admin/item/publishall" onsubmit="return confirm('Draft ${draftCount} ကား အားလုံးကို တစ်ခါတည်း Publish တင်မှာ သေချာပါသလား?')" style="margin:0">
+      <input type="hidden" name="csrf_token" value="${htmlEscape(csrfToken)}">
+      <button type="submit" class="btn" style="width:auto;margin:0;padding:13px 24px;background:linear-gradient(135deg,#0f9d58,#22c55e);box-shadow:0 6px 16px rgba(34,197,94,.4)">🚀 Publish All Drafts (${draftCount})</button>
+    </form>` : ''}
   </div>
 
   <!-- ════ CONTENT LIST ════ -->
@@ -3041,7 +3117,8 @@ export async function onRequest(context) {
         paid: keys.filter(k => k.role === "paid").length,
         trial: keys.filter(k => k.role === "trial" || !k.role).length,
       };
-      let allItems = await listItems(env);
+      let allItems = await listItems(env, true);  // admin → draft အပါအဝင် အားလုံး ပြ
+      const draftCount = await countDraftItems(env);
       const itType = String(url.searchParams.get("ittype") || "").trim();
       if (isValidCategory(itType)) allItems = allItems.filter(i => i.type === itType);
       const itQuery = String(url.searchParams.get("itq") || "").trim().slice(0, 80);
@@ -3056,7 +3133,7 @@ export async function onRequest(context) {
       const newKey = url.searchParams.get("newkey") || "";
       const info = url.searchParams.get("info") || "";
       return new Response(
-        adminPage(keys, stats, csrfToken, newKey, info, items, itPage, itTotalPages, itQuery, itTotal, isValidCategory(itType) ? itType : "", tmdbConfigured(env)),
+        adminPage(keys, stats, csrfToken, newKey, info, items, itPage, itTotalPages, itQuery, itTotal, isValidCategory(itType) ? itType : "", tmdbConfigured(env), draftCount),
         { headers: { "content-type": "text/html; charset=utf-8", ...setCsrf } }
       );
     }
@@ -3098,7 +3175,9 @@ export async function onRequest(context) {
       if (poster && !isHttpUrl(poster)) return redirectInfo("Poster link မှားနေပါတယ်။");
       if (slide_image && !isHttpUrl(slide_image)) return redirectInfo("Slide banner link မှားနေပါတယ်။");
       const id = generateItemId();
-      const data = { id, type, title, poster, slide_image, note, actress, created_at: Date.now() };
+      // save_mode=draft → published=0 (မပြ) ; ဒါမှမဟုတ် publish → published=1 (တန်းတင်)
+      const isDraft = String(form.save_mode || "publish") === "draft";
+      const data = { id, type, title, poster, slide_image, note, actress, created_at: Date.now(), published: isDraft ? 0 : 1 };
       // မင်းသမီးနာမည်တွေအတွက် ပုံကို cache ထဲ ကြိုသိမ်း (watch page မှာ ပုံပေါ်ဖို့)
       for (const nm of parseActressNames(actress)) {
         const slug = actressNameToSlug(nm);
@@ -3119,7 +3198,9 @@ export async function onRequest(context) {
         data.download_url = download_url || video_url;
       }
       await putItem(env, id, data);
-      return redirectInfo(`"${title}" တင်ပြီးပါပြီ။`);
+      return redirectInfo(isDraft
+        ? `"${title}" ကို Draft အဖြစ် သိမ်းပြီးပါပြီ (မပြသေးပါ)။`
+        : `"${title}" တင်ပြီးပါပြီ။`);
     }
 
     // UPDATE ITEM
@@ -3145,7 +3226,8 @@ export async function onRequest(context) {
         { headers: { "content-type": "text/html; charset=utf-8" } });
 
 
-      const data = { id, type, title, poster, slide_image, note, actress, created_at: existing.created_at || Date.now() };
+      // edit လုပ်တဲ့အခါ — မူရင်း published status ကို ဆက်ထိန်းထား (draft က draft အတိုင်း)
+      const data = { id, type, title, poster, slide_image, note, actress, created_at: existing.created_at || Date.now(), published: (existing.published == null ? 1 : existing.published) };
       for (const nm of parseActressNames(actress)) {
         const slug = actressNameToSlug(nm);
         if (slug && !(await getActressCache(env, slug))) {
@@ -3178,6 +3260,14 @@ export async function onRequest(context) {
       const id = String(form.id || "").trim();
       if (id) await deleteItem(env, id);
       return redirectInfo("Content ဖျက်ပြီးပါပြီ။");
+    }
+
+    // PUBLISH ALL DRAFTS — Draft အားလုံးကို တစ်ခါတည်း တင်
+    if (path === "/admin/item/publishall" && method === "POST") {
+      const form = await parseForm(request);
+      if (!(await verifyCsrf(request, form))) return new Response("CSRF failed", { status: 403 });
+      const n = await publishAllDrafts(env);
+      return redirectInfo(n > 0 ? `Draft ${n} ကား အားလုံးကို Publish တင်ပြီးပါပြီ။ 🚀` : "Publish တင်စရာ Draft မရှိပါ။");
     }
 
     // CREATE KEY(S)
