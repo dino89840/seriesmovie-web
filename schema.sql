@@ -62,3 +62,5 @@ CREATE TABLE IF NOT EXISTS actress_cache (
   url TEXT DEFAULT '',
   created_at INTEGER DEFAULT 0
 );
+ALTER TABLE items ADD COLUMN published INTEGER DEFAULT 1;
+CREATE INDEX IF NOT EXISTS idx_items_published ON items(published, type);
