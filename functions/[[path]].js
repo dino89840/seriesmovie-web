@@ -62,7 +62,10 @@ function db(env) {
 }
 
 // expired session / rate-limit row တွေကို lazy cleanup (cron မလို)
+// ── request တိုင်း run ရင် D1 write quota မြန်မြန်ကုန်လို့ —
+//    ၂% (၅၀ ကြိမ်မှ ၁ ကြိမ်) လောက်သာ ကျပန်း run စေတယ်။
 async function lazyCleanup(env) {
+  if (Math.random() > 0.02) return;   // ⬅️ ၉၈% ကျော် ကျော်လွှားသွားမယ် (write ချွေတာ)
   const now = Date.now();
   try {
     await db(env).batch([
@@ -549,6 +552,59 @@ async function listItems(env, includeUnpublished = false) {
     published: (r.published == null ? 1 : (r.published ? 1 : 0)),
   }));
 }
+  const res = await db(env).prepare(sql).all();
+  return (res.results || []).map(r => ({
+    id: r.id,
+    title: r.title || "",
+    poster: r.poster || "",
+    slide_image: r.slide_image || "",
+    type: r.type || "movie",
+    actress: r.actress || "",
+    created_at: r.created_at || 0,
+    published: (r.published == null ? 1 : (r.published ? 1 : 0)),
+  }));
+}
+
+// ── type တစ်ခုအတွက် DB level မှာ filter + LIMIT/OFFSET (page တိုင်း item အကုန်မဆွဲ) ──
+// count + slice ကို batch တစ်ခါတည်း ဆွဲ → D1 round-trip သက်သာ
+async function listItemsByTypePaged(env, type, page, perPage) {
+  const offset = (page - 1) * perPage;
+  const [cntRes, listRes] = await db(env).batch([
+    db(env).prepare("SELECT COUNT(*) AS c FROM items WHERE published=1 AND type=?").bind(type),
+    db(env).prepare(
+      "SELECT id, title, poster, slide_image, type, actress, created_at FROM items WHERE published=1 AND type=? ORDER BY created_at DESC LIMIT ? OFFSET ?"
+    ).bind(type, perPage, Math.max(0, offset)),
+  ]);
+  const total = (cntRes.results && cntRes.results[0] && cntRes.results[0].c) ? cntRes.results[0].c : 0;
+  const items = (listRes.results || []).map(r => ({
+    id: r.id, title: r.title || "", poster: r.poster || "",
+    slide_image: r.slide_image || "", type: r.type || "movie",
+    actress: r.actress || "", created_at: r.created_at || 0,
+  }));
+  return { items, total };
+}
+
+// ── Home အတွက်: type တစ်ခုစီ N ခုစီ ကို batch တစ်ခါတည်း ဆွဲ (item အကုန်မဆွဲ) ──
+async function listHomePreview(env, previewCount, randomCount) {
+  const q = (type, lim) => db(env).prepare(
+    "SELECT id, title, poster, slide_image, type, created_at FROM items WHERE published=1 AND type=? ORDER BY created_at DESC LIMIT ?"
+  ).bind(type, lim);
+  const [mv, sr, ad, rd, sl] = await db(env).batch([
+    q("movie", previewCount),
+    q("series", previewCount),
+    q("adult", previewCount),
+    q("random", randomCount),
+    // slider အတွက် — slide_image (သို့) poster ရှိတဲ့ နောက်ဆုံး ၆ ခု
+    db(env).prepare(
+      "SELECT id, title, poster, slide_image, type FROM items WHERE published=1 AND (slide_image!='' OR poster!='') ORDER BY created_at DESC LIMIT 6"
+    ),
+  ]);
+  const map = (res) => (res.results || []).map(r => ({
+    id: r.id, title: r.title || "", poster: r.poster || "",
+    slide_image: r.slide_image || "", type: r.type || "movie", created_at: r.created_at || 0,
+  }));
+  return { movie: map(mv), series: map(sr), adult: map(ad), random: map(rd), slides: map(sl) };
+}
 
 // Draft (မတင်ရသေး) items အရေအတွက် တွက်
 async function countDraftItems(env) {
@@ -1032,6 +1088,39 @@ function htmlResponse(body, extraHeaders = {}, status = 200) {
     ...extraHeaders,
   };
   return new Response(body, { status, headers });
+}
+
+// ── Public page (login မလိုတာ) — edge cache (caches.default) helper ──
+// login ဝင်/မဝင်အလိုက် HTML ကွဲတာမို့၊ guest (login မဝင်) request တွေကိုသာ cache လုပ်မယ်။
+// user login ဝင်ထားရင် (cookie ပါရင်) cache မလုပ်ဘဲ fresh ပြန်ပေးတယ် → key chip/My List မှန်အောင်။
+function isGuestRequest(request) {
+  const cookie = request.headers.get("Cookie") || "";
+  return cookie.indexOf(COOKIE_NAME + "=") === -1;  // session cookie မပါ → guest
+}
+
+async function cachedHtml(context, request, ttlSec, builder) {
+  // login ဝင်ထားရင် cache မသုံး (personalize ဖြစ်နေလို့)
+  if (!isGuestRequest(request)) {
+    return new Response(await builder(), { headers: { "content-type": "text/html; charset=utf-8" } });
+  }
+  const cache = caches.default;
+  const cacheKey = new Request(new URL(request.url).toString(), { method: "GET" });
+  const hit = await cache.match(cacheKey);
+  if (hit) {
+    const h = new Headers(hit.headers);
+    h.set("X-CMFlix-Page-Cache", "HIT");
+    return new Response(hit.body, { status: hit.status, headers: h });
+  }
+  const html = await builder();
+  const resp = new Response(html, {
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "Cache-Control": `public, max-age=0, s-maxage=${ttlSec}`,
+      "X-CMFlix-Page-Cache": "MISS",
+    },
+  });
+  context.waitUntil(cache.put(cacheKey, resp.clone()));
+  return resp;
 }
 
 
@@ -2712,50 +2801,68 @@ export async function onRequest(context) {
   const method = request.method;
   const clientIp = getClientIp(request);
 
-  // ───────────── HOME ─────────────
+   // ───────────── HOME ─────────────
   if (path === "/" && method === "GET") {
     const user = await getCurrentUser(request, env);
-    const all = await listItems(env);
-    const byType = (t) => all.filter(i => i.type === t);
-    const sections = [
-      { type: "movie",  items: byType("movie").slice(0, HOME_PREVIEW_COUNT) },
-      { type: "series", items: byType("series").slice(0, HOME_PREVIEW_COUNT) },
-      { type: "adult",  items: byType("adult").slice(0, HOME_PREVIEW_COUNT) },
-      { type: "random", items: byType("random").slice(0, 6) },
-    ];
-    const withImg = all.filter(i => i.slide_image || i.poster);
-    const slidePool = withImg.slice(0, 6);
-    const slides = slidePool.map(i => ({
-      image: i.slide_image || i.poster,
-      title: i.title,
-      desc: (CATEGORIES[i.type] || CATEGORIES.movie).name,
-      tag: (CATEGORIES[i.type] || CATEGORIES.movie).name.toUpperCase(),
-      link: "/watch/" + i.id,
-    }));
-    // login ဝင်ပြီးစ user အတွက် welcome box ပြရန် (admin မဟုတ်၊ premium active)
+    // login ဝင်ထားရင် welcome box ပါတာမို့ cache မလုပ်၊ guest ဆို cache (၃၀ စက္ကန့်)
     const showWelcome = url.searchParams.get("welcome") === "1" && user && !user.isAdmin && !isExpired(user);
-    return new Response(homePage(slides, sections, user, showWelcome), { headers: { "content-type": "text/html; charset=utf-8" } });
-
+    if (user || showWelcome) {
+      const hp = await listHomePreview(env, HOME_PREVIEW_COUNT, 6);
+      const sections = [
+        { type: "movie",  items: hp.movie },
+        { type: "series", items: hp.series },
+        { type: "adult",  items: hp.adult },
+        { type: "random", items: hp.random },
+      ];
+      const slides = hp.slides.map(i => ({
+        image: i.slide_image || i.poster, title: i.title,
+        desc: (CATEGORIES[i.type] || CATEGORIES.movie).name,
+        tag: (CATEGORIES[i.type] || CATEGORIES.movie).name.toUpperCase(),
+        link: "/watch/" + i.id,
+      }));
+      return new Response(homePage(slides, sections, user, showWelcome), { headers: { "content-type": "text/html; charset=utf-8" } });
+    }
+    // guest → edge cache
+    return cachedHtml(context, request, 30, async () => {
+      const hp = await listHomePreview(env, HOME_PREVIEW_COUNT, 6);
+      const sections = [
+        { type: "movie",  items: hp.movie },
+        { type: "series", items: hp.series },
+        { type: "adult",  items: hp.adult },
+        { type: "random", items: hp.random },
+      ];
+      const slides = hp.slides.map(i => ({
+        image: i.slide_image || i.poster, title: i.title,
+        desc: (CATEGORIES[i.type] || CATEGORIES.movie).name,
+        tag: (CATEGORIES[i.type] || CATEGORIES.movie).name.toUpperCase(),
+        link: "/watch/" + i.id,
+      }));
+      return homePage(slides, sections, null, false);
+    });
   }
 
-  // ───────────── CATEGORY GRID ─────────────
+
+   // ───────────── CATEGORY GRID ─────────────
   if (path.startsWith("/category/") && method === "GET") {
     const cat = path.slice("/category/".length).split("/")[0];
     if (!isValidCategory(cat)) return Response.redirect(new URL("/", url).toString(), 302);
     const user = await getCurrentUser(request, env);
-    const all = (await listItems(env)).filter(i => i.type === cat);
-    const total = all.length;
-    const totalPages = Math.max(1, Math.ceil(total / ITEMS_PER_PAGE));
     let page = parseInt(url.searchParams.get("page") || "1", 10);
     if (!Number.isFinite(page) || page < 1) page = 1;
-    if (page > totalPages) page = totalPages;
-    const slice = all.slice((page - 1) * ITEMS_PER_PAGE, page * ITEMS_PER_PAGE);
-    const c = CATEGORIES[cat];
-    return new Response(
-      gridPage(`${c.icon} ${c.name}`, cat, slice, page, totalPages, total, (p) => `/category/${cat}?page=${p}`, "", user),
-      { headers: { "content-type": "text/html; charset=utf-8" } }
-    );
+    const build = async (forUser) => {
+      const { items: slice, total } = await listItemsByTypePaged(env, cat, page, ITEMS_PER_PAGE);
+      const totalPages = Math.max(1, Math.ceil(total / ITEMS_PER_PAGE));
+      if (page > totalPages) page = totalPages;
+      const c = CATEGORIES[cat];
+      return gridPage(`${c.icon} ${c.name}`, cat, slice, page, totalPages, total, (p) => `/category/${cat}?page=${p}`, "", forUser);
+    };
+    // login ဝင်ထားရင် fresh (key chip ပြရန်)၊ guest ဆို edge cache (၃၀ စက္ကန့်)
+    if (user) {
+      return new Response(await build(user), { headers: { "content-type": "text/html; charset=utf-8" } });
+    }
+    return cachedHtml(context, request, 30, () => build(null));
   }
+
 
   // ───────────── SEARCH ─────────────
   if (path === "/search" && method === "GET") {
