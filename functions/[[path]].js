@@ -552,19 +552,7 @@ async function listItems(env, includeUnpublished = false) {
     published: (r.published == null ? 1 : (r.published ? 1 : 0)),
   }));
 }
-  const res = await db(env).prepare(sql).all();
-  return (res.results || []).map(r => ({
-    id: r.id,
-    title: r.title || "",
-    poster: r.poster || "",
-    slide_image: r.slide_image || "",
-    type: r.type || "movie",
-    actress: r.actress || "",
-    created_at: r.created_at || 0,
-    published: (r.published == null ? 1 : (r.published ? 1 : 0)),
-  }));
-}
-
+  
 // ── type တစ်ခုအတွက် DB level မှာ filter + LIMIT/OFFSET (page တိုင်း item အကုန်မဆွဲ) ──
 // count + slice ကို batch တစ်ခါတည်း ဆွဲ → D1 round-trip သက်သာ
 async function listItemsByTypePaged(env, type, page, perPage) {
