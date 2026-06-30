@@ -830,6 +830,31 @@ async function parseForm(request) {
 function isHttpUrl(u) {
   return /^https?:\/\//i.test(String(u || "").trim());
 }
+/* ══════════════════════════════════════════════════
+   DOMAIN REWRITE  — link domain အဟောင်း→အသစ် အလိုအလျောက်ပြောင်း
+   • database ထဲက မူရင်း link မထိ — သုံးတဲ့အချိန်မှ ပြောင်းပေးတယ်
+   • နောက်နောင် domain ပြောင်းရင် ဒီ map ထဲ စာတစ်ကြောင်းပဲ ထပ်ထည့်ရုံ
+   ══════════════════════════════════════════════════ */
+const DOMAIN_REWRITES = [
+  { from: "stream.cmapp.tv", to: "stream.cmreel.com" },
+  // နောက်ထပ် domain ပြောင်းရင် ဒီအောက်မှာ ထပ်ထည့်ပါ၊ ဥပမာ —
+  // { from: "stream.cmreel.com", to: "stream.cmnew.com" },
+];
+
+function rewriteDomain(rawUrl) {
+  let u = String(rawUrl || "");
+  if (!u) return u;
+  for (const r of DOMAIN_REWRITES) {
+    if (!r.from || !r.to) continue;
+    // http/https နှစ်မျိုးလုံး၊ host တိတိကျကျ ကိုက်မှ ပြောင်း (substring မှား မပြောင်းအောင်)
+    u = u.replace(
+      new RegExp("^(https?:\\/\\/)" + r.from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?=[\\/:?#]|$)", "i"),
+      "$1" + r.to
+    );
+  }
+  return u;
+}
+
 
 /* ── PART 1 ends here. PART 2 uses everything above ── */
 // functions/[[path]].js  — PART 2 of 2  (append directly below PART 1)
@@ -2670,11 +2695,11 @@ function resolveRealUrl(item, s, e, download) {
     const seasons = Array.isArray(item.seasons) ? item.seasons : [];
     const ep = seasons?.[s]?.episodes?.[e];
     if (!ep) return "";
-    if (download) return ep.download_url || ep.video_url || "";
-    return ep.video_url || "";
+    if (download) return rewriteDomain(ep.download_url || ep.video_url || "");
+    return rewriteDomain(ep.video_url || "");
   }
-  if (download) return item.download_url || item.video_url || "";
-  return item.video_url || "";
+  if (download) return rewriteDomain(item.download_url || item.video_url || "");
+  return rewriteDomain(item.video_url || "");
 }
 
 /* ══════════════════════════════════════════════════
