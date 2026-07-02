@@ -2985,11 +2985,27 @@ export async function onRequest(context) {
           const eStr = String(epNo).padStart(2, "0");
           downloadName = `${downloadName} S${sStr}E${eStr}`;
         }
+        // မြန်မာ Unicode စာလုံးများ ကျန်ရှိစေရန် — control char + path/quote အန္တရာယ်ရှိသော char များသာ ဖယ်
         const safeName = downloadName
-          .replace(/[^\w\-. ]+/g, "_").slice(0, 80).trim() || "video";
+          .replace(/[\x00-\x1F\x7F/\\:*?"<>|]+/g, " ")   // control + filesystem/HTTP အန္တရာယ် char
+          .replace(/\s+/g, " ")
+          .trim()
+          .slice(0, 80)
+          .trim() || "video";
         const ext = real.split("?")[0].split(".").pop();
-        const fname = /^[a-z0-9]{2,5}$/i.test(ext) ? `${safeName}.${ext}` : `${safeName}.mp4`;
-        outHeaders.set("Content-Disposition", `attachment; filename="${fname}"`);
+        const extOk = /^[a-z0-9]{2,5}$/i.test(ext);
+        const fnameFull = extOk ? `${safeName}.${ext}` : `${safeName}.mp4`;
+
+        // ── ASCII fallback (မြန်မာစာ ဖြုတ်ထားတဲ့ ရိုးရိုး filename — header ideal မဟုတ်တဲ့ client အတွက်) ──
+        const asciiName = (safeName.replace(/[^\x20-\x7E]+/g, "_").replace(/\s+/g, "_").replace(/^_+|_+$/g, "") || "video");
+        const asciiFull = extOk ? `${asciiName}.${ext}` : `${asciiName}.mp4`;
+
+        // ── RFC 5987: filename* နဲ့ မြန်မာစာ (UTF-8) ကို မှန်မှန်ကန်ကန် ပို့ ──
+        const encodedFull = encodeURIComponent(fnameFull).replace(/['()*]/g, c => "%" + c.charCodeAt(0).toString(16).toUpperCase());
+        outHeaders.set(
+          "Content-Disposition",
+          `attachment; filename="${asciiFull}"; filename*=UTF-8''${encodedFull}`
+        );
         outHeaders.set("Cache-Control", "private, no-store"); // download ကို cache မလုပ်
         return new Response(originResp.body, { status: originResp.status, headers: outHeaders });
     }
