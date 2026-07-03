@@ -2378,8 +2378,9 @@ ${footer()}`;
 
   function applySource(video){
     if(!video) return;
+    showLoading();   // source load စချိန်ကတည်းက spinner ပြ (ပထမကား အမဲကွက် fix)
     if(player){ player.source={type:'video',sources:[{src:video,type:'video/mp4'}]}; }
-    else if(v){ v.src=video; }
+    else if(v){ v.src=video; v.load && v.load(); }
   }
 
   function setSource(video, dl, title){
