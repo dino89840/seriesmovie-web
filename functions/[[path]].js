@@ -2353,9 +2353,22 @@ ${footer()}`;
 
   function revealPlayer(){
     if(coverEl) coverEl.classList.add('hide');
-    showLoading();   // ⬅️ Plyr မဆောက်ခင်ကတည်းက spinner အရင်ပြ (ပထမကား အမဲကွက် မဖြစ်အောင်)
+    showLoading();   // Plyr မဆောက်ခင် spinner အရင်ပြ
     initPlayer();
-    showLoading();   // Plyr ဆောက်ပြီးနောက်လည်း ထပ်ပြ (Plyr က DOM ပြန်စီတဲ့အခါ ကျန်မသွားအောင်)
+    showLoading();   // Plyr ဆောက်ပြီးနောက် ထပ်ပြ
+
+    // ── Plyr က DOM ပြန်စီပြီးရင် loading overlay ကို player container ရဲ့
+    //    အပေါ်ဆုံးမှာ ရှိနေအောင် ပြန်ရွှေ့ + z-index မြှင့် (ပထမကား အမဲကွက် fix) ──
+    setTimeout(function(){
+      try{
+        var box=document.querySelector('.player-box');
+        if(box && loadEl){
+          box.appendChild(loadEl);        // Plyr wrapper ရဲ့ နောက်ဆုံးမှာ ထား (အပေါ်ဆုံး layer)
+          loadEl.style.zIndex='30';       // Plyr controls ထက် အပေါ်
+          showLoading();                  // ထပ်မံ ပြသေချာစေ
+        }
+      }catch(_){}
+    }, 60);
   }
 
   function gateMsg(){
