@@ -570,6 +570,66 @@ async function listItemsByTypePaged(env, type, page, perPage) {
   return { items, total };
 }
 
+// ── PUBLIC SEARCH: title LIKE + LIMIT/OFFSET (published သာ) → item အကုန်မဆွဲ ──
+// q ကွက်လပ်ဆို ရလဒ် ဗလာ ပြန်ပေး (DB မထိ)
+async function searchItemsPaged(env, q, page, perPage) {
+  const term = String(q || "").trim();
+  if (!term) return { items: [], total: 0 };
+  // LIKE special char (% _ \) တွေ escape လုပ် → literal အဖြစ် ရှာ
+  const esc = term.replace(/[\\%_]/g, s => "\\" + s);
+  const like = "%" + esc + "%";
+  const offset = Math.max(0, (page - 1) * perPage);
+  const [cntRes, listRes] = await db(env).batch([
+    db(env).prepare(
+      "SELECT COUNT(*) AS c FROM items WHERE published=1 AND title LIKE ? ESCAPE '\\'"
+    ).bind(like),
+    db(env).prepare(
+      "SELECT id, title, poster, slide_image, type, actress, created_at FROM items WHERE published=1 AND title LIKE ? ESCAPE '\\' ORDER BY created_at DESC LIMIT ? OFFSET ?"
+    ).bind(like, perPage, offset),
+  ]);
+  const total = (cntRes.results && cntRes.results[0] && cntRes.results[0].c) ? cntRes.results[0].c : 0;
+  const items = (listRes.results || []).map(r => ({
+    id: r.id, title: r.title || "", poster: r.poster || "",
+    slide_image: r.slide_image || "", type: r.type || "movie",
+    actress: r.actress || "", created_at: r.created_at || 0,
+  }));
+  return { items, total };
+}
+
+// ── ADMIN SEARCH: title/id LIKE + type filter + LIMIT/OFFSET (draft အပါ) → item အကုန်မဆွဲ ──
+// q ကွက်လပ်လည်း လက်ခံ (draft/all list အတွက်)၊ type ကွက်လပ်ဆို type filter မလုပ်
+async function adminSearchItemsPaged(env, q, type, page, perPage) {
+  const term = String(q || "").trim();
+  const offset = Math.max(0, (page - 1) * perPage);
+
+  // WHERE clause dynamic build (draft အပါ → published filter မထည့်)
+  const conds = [];
+  const binds = [];
+  if (type) { conds.push("type=?"); binds.push(type); }
+  if (term) {
+    const esc = term.replace(/[\\%_]/g, s => "\\" + s);
+    const like = "%" + esc + "%";
+    conds.push("(title LIKE ? ESCAPE '\\' OR id LIKE ? ESCAPE '\\')");
+    binds.push(like, like);
+  }
+  const whereSql = conds.length ? ("WHERE " + conds.join(" AND ")) : "";
+
+  const [cntRes, listRes] = await db(env).batch([
+    db(env).prepare(`SELECT COUNT(*) AS c FROM items ${whereSql}`).bind(...binds),
+    db(env).prepare(
+      `SELECT id, title, poster, slide_image, type, actress, created_at, published FROM items ${whereSql} ORDER BY created_at DESC LIMIT ? OFFSET ?`
+    ).bind(...binds, perPage, offset),
+  ]);
+  const total = (cntRes.results && cntRes.results[0] && cntRes.results[0].c) ? cntRes.results[0].c : 0;
+  const items = (listRes.results || []).map(r => ({
+    id: r.id, title: r.title || "", poster: r.poster || "",
+    slide_image: r.slide_image || "", type: r.type || "movie",
+    actress: r.actress || "", created_at: r.created_at || 0,
+    published: (r.published == null ? 1 : (r.published ? 1 : 0)),
+  }));
+  return { items, total };
+}
+
 // ── Home အတွက်: type တစ်ခုစီ N ခုစီ ကို batch တစ်ခါတည်း ဆွဲ (item အကုန်မဆွဲ) ──
 async function listHomePreview(env, previewCount, randomCount) {
   const q = (type, lim) => db(env).prepare(
@@ -2855,14 +2915,12 @@ export async function onRequest(context) {
   if (path === "/search" && method === "GET") {
     const user = await getCurrentUser(request, env);
     const q = String(url.searchParams.get("q") || "").trim().slice(0, 80);
-    const ql = q.toLowerCase();
-    const all = ql ? (await listItems(env)).filter(i => (i.title || "").toLowerCase().includes(ql)) : [];
-    const total = all.length;
-    const totalPages = Math.max(1, Math.ceil(total / ITEMS_PER_PAGE));
     let page = parseInt(url.searchParams.get("page") || "1", 10);
     if (!Number.isFinite(page) || page < 1) page = 1;
+    // SQL level မှာ LIKE + LIMIT/OFFSET နဲ့ တိုက်ရိုက် filter (item အကုန်မဆွဲ → D1 read ချွေတာ)
+    const { items: slice, total } = await searchItemsPaged(env, q, page, ITEMS_PER_PAGE);
+    const totalPages = Math.max(1, Math.ceil(total / ITEMS_PER_PAGE));
     if (page > totalPages) page = totalPages;
-    const slice = all.slice((page - 1) * ITEMS_PER_PAGE, page * ITEMS_PER_PAGE);
     return new Response(
       gridPage(`🔍 "${q}"`, "", slice, page, totalPages, total, (p) => `/search?q=${encodeURIComponent(q)}&page=${p}`, q, user),
       { headers: { "content-type": "text/html; charset=utf-8" } }
@@ -3252,19 +3310,16 @@ export async function onRequest(context) {
         paid: keys.filter(k => k.role === "paid").length,
         trial: keys.filter(k => k.role === "trial" || !k.role).length,
       };
-      let allItems = await listItems(env, true);  // admin → draft အပါအဝင် အားလုံး ပြ
       const draftCount = await countDraftItems(env);
       const itType = String(url.searchParams.get("ittype") || "").trim();
-      if (isValidCategory(itType)) allItems = allItems.filter(i => i.type === itType);
+      const itTypeValid = isValidCategory(itType) ? itType : "";
       const itQuery = String(url.searchParams.get("itq") || "").trim().slice(0, 80);
-      const itQl = itQuery.toLowerCase();
-      const filtered = itQl ? allItems.filter(i => (i.title || "").toLowerCase().includes(itQl) || (i.id || "").toLowerCase().includes(itQl)) : allItems;
-      const itTotal = filtered.length;
-      const itTotalPages = Math.max(1, Math.ceil(itTotal / ADMIN_ITEMS_PER_PAGE));
       let itPage = parseInt(url.searchParams.get("itpage") || "1", 10);
       if (!Number.isFinite(itPage) || itPage < 1) itPage = 1;
+      // SQL level မှာ filter + LIMIT/OFFSET (item အကုန်မဆွဲ → D1 read ချွေတာ)
+      const { items, total: itTotal } = await adminSearchItemsPaged(env, itQuery, itTypeValid, itPage, ADMIN_ITEMS_PER_PAGE);
+      const itTotalPages = Math.max(1, Math.ceil(itTotal / ADMIN_ITEMS_PER_PAGE));
       if (itPage > itTotalPages) itPage = itTotalPages;
-      const items = filtered.slice((itPage - 1) * ADMIN_ITEMS_PER_PAGE, itPage * ADMIN_ITEMS_PER_PAGE);
       const newKey = url.searchParams.get("newkey") || "";
       const info = url.searchParams.get("info") || "";
       return new Response(
