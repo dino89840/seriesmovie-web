@@ -1,5 +1,3 @@
-
-
 // functions/[[path]].js  — PART 1 of 2
 // ════════════════════════════════════════════════════════════════
 //  CM FLIX — Self-hosted Movie / Series streaming app  (D1 EDITION)
@@ -83,6 +81,28 @@ async function tgClearState(env, chatId) {
   try { await db(env).prepare("DELETE FROM tg_state WHERE chat_id=?").bind(String(chatId)).run(); } catch (_) {}
 }
 
+// callback query (inline button နှိပ်တာ) ကို "loading" ပျောက်အောင် answer ပေးရမယ်
+async function tgAnswerCallback(env, callbackId, text = "") {
+  try {
+    await fetch(`${TG_API}${env.TG_BOT_TOKEN}/answerCallbackQuery`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ callback_query_id: callbackId, text }),
+    });
+  } catch (_) {}
+}
+
+// message ရဲ့ inline keyboard ကို ဖယ်ချ (button နှိပ်ပြီးရင် ထပ်မနှိပ်ရအောင်)
+async function tgEditReplyMarkup(env, chatId, messageId, markup = { inline_keyboard: [] }) {
+  try {
+    await fetch(`${TG_API}${env.TG_BOT_TOKEN}/editMessageReplyMarkup`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId, message_id: messageId, reply_markup: markup }),
+    });
+  } catch (_) {}
+}
+
 // help / menu text
 function tgHelpText() {
   return [
@@ -150,6 +170,47 @@ async function tgCreateKeys(env, days, count, role, note) {
    TELEGRAM UPDATE HANDLER — main logic
    ══════════════════════════════════════════════════ */
 async function handleTelegramUpdate(env, update) {
+  // ══════════ CALLBACK QUERY (inline button နှိပ်တာ) ══════════
+  if (update.callback_query) {
+    const cq = update.callback_query;
+    const cqChatId = cq.message && cq.message.chat ? cq.message.chat.id : (cq.from ? cq.from.id : null);
+    const cqFromId = cq.from ? cq.from.id : cqChatId;
+    const cqData = String(cq.data || "");
+    const cqMsgId = cq.message ? cq.message.message_id : null;
+
+    // admin မဟုတ်ရင် ဘာမှ မလုပ်
+    if (!tgIsAdmin(env, cqFromId)) {
+      await tgAnswerCallback(env, cq.id, "⛔ ခွင့်မရှိပါ");
+      return;
+    }
+
+    // ── category ရွေးတဲ့ button ── (addtype:movie စသဖြင့်)
+    if (cqData.startsWith("addtype:")) {
+      const type = cqData.slice("addtype:".length);
+      if (!isValidCategory(type)) {
+        await tgAnswerCallback(env, cq.id, "⚠️ category မှားနေပါတယ်");
+        return;
+      }
+      const st = await tgGetState(env, cqChatId);
+      // /add flow မှာ မဟုတ်ရင် ကျော်
+      if (st.step !== "add_type") {
+        await tgAnswerCallback(env, cq.id, "⏳ /add အရင် စပါ");
+        return;
+      }
+      st.data.type = type;
+      await tgSetState(env, cqChatId, "add_title", st.data);
+      await tgAnswerCallback(env, cq.id, "✅ ရွေးပြီး");
+      // button တွေ ဖယ်ချ (ထပ်မနှိပ်ရအောင်)
+      if (cqMsgId != null) await tgEditReplyMarkup(env, cqChatId, cqMsgId);
+      const catName = { movie: "🎬 R Mosaic", series: "📺 Series", adult: "🔞 21+ mmsub", random: "⭐ Random Best" }[type] || type;
+      await tgSend(env, cqChatId, `✅ Category: <b>${catName}</b>\n\n✏️ ဇာတ်ကား <b>Title</b> ရိုက်ပါ:`);
+      return;
+    }
+
+    await tgAnswerCallback(env, cq.id);
+    return;
+  }
+
   const msg = update.message || update.edited_message;
   if (!msg || !msg.chat) return;
   const chatId = msg.chat.id;
@@ -253,7 +314,21 @@ async function handleTelegramUpdate(env, update) {
   if (text === "/add") {
     await tgSetState(env, chatId, "add_type", {});
     await tgSend(env, chatId,
-      "🎬 <b>ဇာတ်ကားအသစ်တင်ရန်</b>\n\nCategory ရွေးပါ — အောက်က တစ်ခုကို ရိုက်ပါ:\n\n<code>movie</code> · <code>series</code> · <code>adult</code> · <code>random</code>\n\n(/cancel နဲ့ ရပ်နိုင်)");
+      "🎬 <b>ဇာတ်ကားအသစ်တင်ရန်</b>\n\nCategory ကို အောက်က ခလုတ်များထဲမှ ရွေးပါ:\n\n(/cancel နဲ့ ရပ်နိုင်)",
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: "🎬 R Mosaic", callback_data: "addtype:movie" },
+              { text: "📺 Series", callback_data: "addtype:series" },
+            ],
+            [
+              { text: "🔞 21+ mmsub", callback_data: "addtype:adult" },
+              { text: "⭐ Random Best", callback_data: "addtype:random" },
+            ],
+          ],
+        },
+      });
     return;
   }
 
@@ -293,6 +368,23 @@ async function handleTelegramUpdate(env, update) {
     if (text.toLowerCase() !== "skip") {
       if (!isHttpUrl(text)) { await tgSend(env, chatId, "⚠️ link မှားနေပါတယ်။ ပြန်ရိုက်ပါ (သို့) <code>skip</code>"); return; }
       st.data.slide_image = text.slice(0, 600);
+    }
+    // slide ပြီးရင် — မင်းသမီးနာမည် မေး
+    await tgSetState(env, chatId, "add_actress", st.data);
+    await tgSend(env, chatId, "👩 <b>မင်းသမီးနာမည်</b> ရိုက်ပါ:\n(များစွာဆို comma \",\" ခြားပါ · မထည့်ချင်ရင် <code>skip</code>)");
+    return;
+  }
+
+  if (st.step === "add_actress") {
+    if (text.toLowerCase() !== "skip") {
+      st.data.actress = text.slice(0, 300);
+      // မင်းသမီးနာမည်တွေအတွက် ပုံကို cache ထဲ ကြိုသိမ်း (watch page မှာ ပုံပေါ်ဖို့)
+      for (const nm of parseActressNames(st.data.actress)) {
+        const slug = actressNameToSlug(nm);
+        if (slug && !(await getActressCache(env, slug))) {
+          try { await lookupActress(env, nm); } catch (_) {}
+        }
+      }
     }
     // series ဆို episodes မေး၊ မဟုတ်ရင် video link မေး
     if (st.data.type === "series") {
@@ -335,7 +427,7 @@ async function handleTelegramUpdate(env, update) {
       poster: st.data.poster || "",
       slide_image: st.data.slide_image || "",
       note: st.data.note || "",
-      actress: "",
+      actress: st.data.actress || "",
       created_at: Date.now(),
       published: 1,
     };
@@ -348,7 +440,7 @@ async function handleTelegramUpdate(env, update) {
     await putItem(env, id, data);
     await tgClearState(env, chatId);
     await tgSend(env, chatId,
-      `✅ <b>တင်ပြီးပါပြီ!</b>\n\n🎬 ${htmlEscape(data.title)}\n🆔 <code>${id}</code>\n🔗 /watch/${id}`);
+      `✅ <b>တင်ပြီးပါပြီ!</b>\n\n🎬 ${htmlEscape(data.title)}\n${data.actress ? `👩 ${htmlEscape(data.actress)}\n` : ""}🆔 <code>${id}</code>\n🔗 /watch/${id}`);
     return;
   }
 
