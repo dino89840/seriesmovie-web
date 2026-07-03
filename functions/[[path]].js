@@ -23,6 +23,339 @@ const KEY_PREFIX       = "CM";
 // ── Contact (Admin) ──
 const CONTACT_TELEGRAM = "iqowoq";          // @ မပါဘဲ username ပဲ
 const CONTACT_VIBER    = "09688171999";     // Viber phone number
+// ════════════════════════════════════════════════════════════════
+//  TELEGRAM BOT — admin bot for CM FLIX (add / delete / key / check)
+//  • env variables လိုအပ်: TG_BOT_TOKEN, TG_ADMIN_IDS, TG_WEBHOOK_SECRET
+//  • TG_ADMIN_IDS = comma-separated telegram user id (ဥပမာ "12345,67890")
+// ════════════════════════════════════════════════════════════════
+const TG_API = "https://api.telegram.org/bot";
+
+// bot user တစ်ယောက်စီရဲ့ conversation state (video တင်တဲ့ multi-step flow အတွက်)
+// Pages Functions က stateless မို့ — D1 table `tg_state` မှာ သိမ်းမယ်
+/* ══════════════════════════════════════════════════
+   TELEGRAM BOT HELPERS
+   ══════════════════════════════════════════════════ */
+
+// admin id စစ် — env.TG_ADMIN_IDS ထဲပါမှ ခွင့်ပြု
+function tgIsAdmin(env, userId) {
+  const ids = String(env.TG_ADMIN_IDS || "")
+    .split(",").map(s => s.trim()).filter(Boolean);
+  return ids.includes(String(userId));
+}
+
+// Telegram API ကို message ပို့
+async function tgSend(env, chatId, text, extra = {}) {
+  try {
+    await fetch(`${TG_API}${env.TG_BOT_TOKEN}/sendMessage`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: text,
+        parse_mode: "HTML",
+        disable_web_page_preview: true,
+        ...extra,
+      }),
+    });
+  } catch (_) {}
+}
+
+// conversation state — get / set / clear (D1 tg_state)
+async function tgGetState(env, chatId) {
+  try {
+    const row = await db(env).prepare("SELECT step, data FROM tg_state WHERE chat_id=?")
+      .bind(String(chatId)).first();
+    if (!row) return { step: "", data: {} };
+    let data = {};
+    try { data = JSON.parse(row.data || "{}"); } catch (_) {}
+    return { step: row.step || "", data };
+  } catch (_) { return { step: "", data: {} }; }
+}
+
+async function tgSetState(env, chatId, step, data) {
+  await db(env).prepare(
+    `INSERT INTO tg_state (chat_id, step, data, updated_at) VALUES (?,?,?,?)
+     ON CONFLICT(chat_id) DO UPDATE SET step=excluded.step, data=excluded.data, updated_at=excluded.updated_at`
+  ).bind(String(chatId), step, JSON.stringify(data || {}), Date.now()).run();
+}
+
+async function tgClearState(env, chatId) {
+  try { await db(env).prepare("DELETE FROM tg_state WHERE chat_id=?").bind(String(chatId)).run(); } catch (_) {}
+}
+
+// help / menu text
+function tgHelpText() {
+  return [
+    "<b>🎬 CM FLIX Admin Bot</b>",
+    "",
+    "<b>ဇာတ်ကား commands:</b>",
+    "/add — ဇာတ်ကား/Series အသစ်တင်ရန် (step-by-step)",
+    "/del &lt;id&gt; — ဇာတ်ကား ဖျက်ရန်",
+    "/find &lt;keyword&gt; — ဇာတ်ကား ရှာရန်",
+    "",
+    "<b>Key commands:</b>",
+    "/key &lt;days&gt; [count] — key အသစ်ထုတ်ရန် (ဥပမာ /key 30 3)",
+    "/checkkey &lt;KEY&gt; — key သက်တမ်း/status စစ်ရန်",
+    "/delkey &lt;KEY&gt; — key ဖျက်ရန်",
+    "",
+    "/cancel — လက်ရှိ လုပ်ဆောင်ချက် ရပ်ရန်",
+    "/help — ဒီ menu ပြန်ပြရန်",
+  ].join("\n");
+}
+
+// key status ကို ဖတ်လို့ရအောင် text ပြောင်း
+function tgKeyInfoText(k) {
+  const now = Date.now();
+  const active = (k.expires_at && now < k.expires_at && !k.disabled);
+  const status = k.disabled ? "🔴 DISABLED" : active ? "🟢 ACTIVE" : "🔴 EXPIRED";
+  const exp = k.expires_at
+    ? new Date(k.expires_at).toLocaleString("en-GB", { hour12: false, timeZone: "Asia/Yangon" })
+    : "—";
+  const remainMs = (k.expires_at || 0) - now;
+  const daysLeft = remainMs > 0 ? Math.ceil(remainMs / 86400000) : 0;
+  const devCount = Array.isArray(k.devices) ? k.devices.length : 0;
+  return [
+    `<b>🔑 Key:</b> <code>${htmlEscape(k.key)}</code>`,
+    `<b>Status:</b> ${status}`,
+    `<b>Type:</b> ${k.role === "paid" ? "PAID" : "TRIAL"}`,
+    `<b>ရက်ကျန်:</b> ${daysLeft} ရက်`,
+    `<b>ကုန်ဆုံးရက်:</b> ${htmlEscape(exp)} (MMT)`,
+    `<b>Devices:</b> ${devCount}/${MAX_DEVICES_PER_KEY}`,
+    k.note ? `<b>မှတ်ချက်:</b> ${htmlEscape(k.note)}` : "",
+  ].filter(Boolean).join("\n");
+}
+
+// key ထုတ် (bot နဲ့ admin panel — logic တူ)
+async function tgCreateKeys(env, days, count, role, note) {
+  const now = Date.now();
+  const created = [];
+  const d = Math.max(1, Math.min(3650, days));
+  const c = Math.max(1, Math.min(20, count));
+  for (let i = 0; i < c; i++) {
+    let keyId = generateKey();
+    let guard = 0;
+    while (await getKey(env, keyId) && guard < 5) { keyId = generateKey(); guard++; }
+    await putKey(env, keyId, {
+      key: keyId, role: role || "paid", created_at: now,
+      expires_at: now + d * 24 * 3600 * 1000,
+      duration_label: `${d} Day${d > 1 ? "s" : ""}`,
+      devices: [], note: note || "via-bot", disabled: false,
+    });
+    created.push(keyId);
+  }
+  return created;
+}
+
+/* ══════════════════════════════════════════════════
+   TELEGRAM UPDATE HANDLER — main logic
+   ══════════════════════════════════════════════════ */
+async function handleTelegramUpdate(env, update) {
+  const msg = update.message || update.edited_message;
+  if (!msg || !msg.chat) return;
+  const chatId = msg.chat.id;
+  const fromId = msg.from ? msg.from.id : chatId;
+  const text = String(msg.text || "").trim();
+
+  // ── admin id စစ် — admin မဟုတ်ရင် ဘာမှ မလုပ် ──
+  if (!tgIsAdmin(env, fromId)) {
+    await tgSend(env, chatId, "⛔ သင့်မှာ ဒီ bot သုံးခွင့် မရှိပါ။");
+    return;
+  }
+
+  // ── /cancel — flow ရပ် ──
+  if (text === "/cancel") {
+    await tgClearState(env, chatId);
+    await tgSend(env, chatId, "✅ လုပ်ဆောင်ချက် ရပ်လိုက်ပါပြီ။");
+    return;
+  }
+
+  // ── /start /help /menu ──
+  if (text === "/start" || text === "/help" || text === "/menu") {
+    await tgClearState(env, chatId);
+    await tgSend(env, chatId, tgHelpText());
+    return;
+  }
+
+  // ── /key <days> [count] — key ထုတ် ──
+  if (text.startsWith("/key")) {
+    const parts = text.split(/\s+/);
+    const days = parseInt(parts[1] || "0", 10);
+    const count = parseInt(parts[2] || "1", 10);
+    if (!days || days < 1) {
+      await tgSend(env, chatId, "⚠️ format: <code>/key &lt;days&gt; [count]</code>\nဥပမာ: <code>/key 30 3</code>");
+      return;
+    }
+    const created = await tgCreateKeys(env, days, count || 1, "paid", "via-bot");
+    const list = created.map(k => `<code>${htmlEscape(k)}</code>`).join("\n");
+    await tgSend(env, chatId, `✅ Key ${created.length} ခု ထုတ်ပြီးပါပြီ (${days} ရက်):\n\n${list}`);
+    return;
+  }
+
+  // ── /checkkey <KEY> — key စစ် ──
+  if (text.startsWith("/checkkey")) {
+    const keyId = normalizeKey(text.slice("/checkkey".length));
+    if (!keyId) {
+      await tgSend(env, chatId, "⚠️ format: <code>/checkkey &lt;KEY&gt;</code>");
+      return;
+    }
+    const k = await getKey(env, keyId);
+    if (!k) { await tgSend(env, chatId, "❌ ဒီ Key ရှာမတွေ့ပါ။"); return; }
+    await tgSend(env, chatId, tgKeyInfoText(k));
+    return;
+  }
+
+  // ── /delkey <KEY> — key ဖျက် ──
+  if (text.startsWith("/delkey")) {
+    const keyId = normalizeKey(text.slice("/delkey".length));
+    if (!keyId) {
+      await tgSend(env, chatId, "⚠️ format: <code>/delkey &lt;KEY&gt;</code>");
+      return;
+    }
+    const k = await getKey(env, keyId);
+    if (!k) { await tgSend(env, chatId, "❌ ဒီ Key ရှာမတွေ့ပါ။"); return; }
+    await deleteKey(env, keyId);
+    await tgSend(env, chatId, `✅ Key <code>${htmlEscape(keyId)}</code> ဖျက်ပြီးပါပြီ။`);
+    return;
+  }
+
+  // ── /del <id> — ဇာတ်ကား ဖျက် ──
+  if (text.startsWith("/del")) {
+    const id = text.slice("/del".length).trim();
+    if (!id) {
+      await tgSend(env, chatId, "⚠️ format: <code>/del &lt;id&gt;</code>");
+      return;
+    }
+    const item = await getItem(env, id);
+    if (!item) { await tgSend(env, chatId, "❌ ဒီ id နဲ့ ဇာတ်ကား ရှာမတွေ့ပါ။"); return; }
+    await deleteItem(env, id);
+    await tgSend(env, chatId, `✅ "<b>${htmlEscape(item.title)}</b>" (<code>${htmlEscape(id)}</code>) ဖျက်ပြီးပါပြီ။`);
+    return;
+  }
+
+  // ── /find <keyword> — ဇာတ်ကား ရှာ ──
+  if (text.startsWith("/find")) {
+    const q = text.slice("/find".length).trim();
+    if (!q) {
+      await tgSend(env, chatId, "⚠️ format: <code>/find &lt;keyword&gt;</code>");
+      return;
+    }
+    const { items, total } = await adminSearchItemsPaged(env, q, "", 1, 10);
+    if (!items.length) { await tgSend(env, chatId, "❌ ရှာမတွေ့ပါ။"); return; }
+    const cat = { movie: "🎬", series: "📺", adult: "🔞", random: "⭐" };
+    const list = items.map(m =>
+      `${cat[m.type] || "🎬"} <b>${htmlEscape(m.title)}</b>\n   <code>${htmlEscape(m.id)}</code>${m.published === 0 ? " ⏳draft" : ""}`
+    ).join("\n\n");
+    await tgSend(env, chatId, `🔍 ရလဒ် (${items.length}/${total}):\n\n${list}`);
+    return;
+  }
+
+  // ── /add — ဇာတ်ကားတင် flow စ ──
+  if (text === "/add") {
+    await tgSetState(env, chatId, "add_type", {});
+    await tgSend(env, chatId,
+      "🎬 <b>ဇာတ်ကားအသစ်တင်ရန်</b>\n\nCategory ရွေးပါ — အောက်က တစ်ခုကို ရိုက်ပါ:\n\n<code>movie</code> · <code>series</code> · <code>adult</code> · <code>random</code>\n\n(/cancel နဲ့ ရပ်နိုင်)");
+    return;
+  }
+
+  // ══════════ MULTI-STEP /add FLOW ══════════
+  const st = await tgGetState(env, chatId);
+
+  if (st.step === "add_type") {
+    const type = text.toLowerCase();
+    if (!isValidCategory(type)) {
+      await tgSend(env, chatId, "⚠️ <code>movie</code> / <code>series</code> / <code>adult</code> / <code>random</code> ထဲက တစ်ခု ရိုက်ပါ။");
+      return;
+    }
+    st.data.type = type;
+    await tgSetState(env, chatId, "add_title", st.data);
+    await tgSend(env, chatId, "✏️ ဇာတ်ကား <b>Title</b> ရိုက်ပါ:");
+    return;
+  }
+
+  if (st.step === "add_title") {
+    st.data.title = text.slice(0, 160);
+    await tgSetState(env, chatId, "add_poster", st.data);
+    await tgSend(env, chatId, "🖼️ <b>Poster URL</b> (ထောင်လိုက်ပုံ link) ရိုက်ပါ:\n(မထည့်ချင်ရင် <code>skip</code>)");
+    return;
+  }
+
+  if (st.step === "add_poster") {
+    if (text.toLowerCase() !== "skip") {
+      if (!isHttpUrl(text)) { await tgSend(env, chatId, "⚠️ link မှားနေပါတယ်။ ပြန်ရိုက်ပါ (သို့) <code>skip</code>"); return; }
+      st.data.poster = text.slice(0, 600);
+    }
+    await tgSetState(env, chatId, "add_slide", st.data);
+    await tgSend(env, chatId, "🖼️ <b>Slide Banner URL</b> (အလျားလိုက်ပုံ) ရိုက်ပါ:\n(မထည့်ချင်ရင် <code>skip</code>)");
+    return;
+  }
+
+  if (st.step === "add_slide") {
+    if (text.toLowerCase() !== "skip") {
+      if (!isHttpUrl(text)) { await tgSend(env, chatId, "⚠️ link မှားနေပါတယ်။ ပြန်ရိုက်ပါ (သို့) <code>skip</code>"); return; }
+      st.data.slide_image = text.slice(0, 600);
+    }
+    // series ဆို episodes မေး၊ မဟုတ်ရင် video link မေး
+    if (st.data.type === "series") {
+      await tgSetState(env, chatId, "add_seasons", st.data);
+      await tgSend(env, chatId, "📺 <b>Series episodes</b> — episode video link တွေ (သို့) JSON ကို paste ချပါ:\n(auto-parse လုပ်ပေးမယ်)");
+    } else {
+      await tgSetState(env, chatId, "add_video", st.data);
+      await tgSend(env, chatId, "🎞️ <b>Video URL</b> (direct .mp4 link) ရိုက်ပါ:");
+    }
+    return;
+  }
+
+  if (st.step === "add_video") {
+    if (!isHttpUrl(text)) { await tgSend(env, chatId, "⚠️ Video URL (http/https) မှန်မှန် ရိုက်ပါ။"); return; }
+    st.data.video_url = text.slice(0, 1000);
+    st.data.download_url = st.data.video_url;
+    await tgSetState(env, chatId, "add_note", st.data);
+    await tgSend(env, chatId, "📝 <b>Note / ဖော်ပြချက်</b> ရိုက်ပါ:\n(မထည့်ချင်ရင် <code>skip</code>)");
+    return;
+  }
+
+  if (st.step === "add_seasons") {
+    const r = sanitizeSeasons(text);
+    if (!r.ok) { await tgSend(env, chatId, `⚠️ ${r.err}\nပြန် paste ချပါ (သို့) /cancel`); return; }
+    st.data.seasons = r.seasons;
+    const epCount = r.seasons.reduce((s, x) => s + (x.episodes || []).length, 0);
+    await tgSetState(env, chatId, "add_note", st.data);
+    await tgSend(env, chatId, `✅ Season ${r.seasons.length} ခု · Episode ${epCount} ခု ဖတ်မိပါပြီ။\n\n📝 <b>Note</b> ရိုက်ပါ (သို့) <code>skip</code>:`);
+    return;
+  }
+
+  if (st.step === "add_note") {
+    if (text.toLowerCase() !== "skip") st.data.note = text.slice(0, 5000);
+    // save — admin panel ရဲ့ putItem logic တူ
+    const id = generateItemId();
+    const data = {
+      id,
+      type: st.data.type,
+      title: st.data.title,
+      poster: st.data.poster || "",
+      slide_image: st.data.slide_image || "",
+      note: st.data.note || "",
+      actress: "",
+      created_at: Date.now(),
+      published: 1,
+    };
+    if (st.data.type === "series") {
+      data.seasons = st.data.seasons || [];
+    } else {
+      data.video_url = st.data.video_url || "";
+      data.download_url = st.data.download_url || st.data.video_url || "";
+    }
+    await putItem(env, id, data);
+    await tgClearState(env, chatId);
+    await tgSend(env, chatId,
+      `✅ <b>တင်ပြီးပါပြီ!</b>\n\n🎬 ${htmlEscape(data.title)}\n🆔 <code>${id}</code>\n🔗 /watch/${id}`);
+    return;
+  }
+
+  // ── ဘာ command မှ မကိုက်ရင် ──
+  await tgSend(env, chatId, "❓ နားမလည်ပါ။ /help ရိုက်ကြည့်ပါ။");
+}
+
 
 // ── Signed stream URL ──
 const STREAM_TTL_SEC   = 6 * 3600;
@@ -2854,6 +3187,20 @@ export async function onRequest(context) {
   const path = url.pathname;
   const method = request.method;
   const clientIp = getClientIp(request);
+    // ───────────── TELEGRAM WEBHOOK ─────────────
+  if (path === "/tg/webhook" && method === "POST") {
+    // secret token စစ် — Telegram က header နဲ့ ပို့တဲ့ secret နဲ့ ကိုက်မှ လက်ခံ
+    const secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token") || "";
+    if (!env.TG_WEBHOOK_SECRET || !safeEqual(secret, env.TG_WEBHOOK_SECRET)) {
+      return new Response("forbidden", { status: 403 });
+    }
+    let update = null;
+    try { update = await request.json(); } catch (_) { return new Response("bad", { status: 400 }); }
+    // Telegram ကို ချက်ချင်း 200 ပြန်ပေးဖို့ — processing ကို background မှာ
+    context.waitUntil(handleTelegramUpdate(env, update).catch(() => {}));
+    return new Response("ok", { status: 200 });
+  }
+
 
    // ───────────── HOME ─────────────
   if (path === "/" && method === "GET") {
