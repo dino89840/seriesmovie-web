@@ -1,5 +1,3 @@
-
-
 // functions/[[path]].js  — PART 1 of 2
 // ════════════════════════════════════════════════════════════════
 //  CM FLIX — Self-hosted Movie / Series streaming app  (D1 EDITION)
@@ -1843,8 +1841,9 @@ ${footer()}`;
 
   function revealPlayer(){
     if(coverEl) coverEl.classList.add('hide');
+    showLoading();   // ⬅️ Plyr မဆောက်ခင်ကတည်းက spinner အရင်ပြ (ပထမကား အမဲကွက် မဖြစ်အောင်)
     initPlayer();
-    showLoading();  // Play နှိပ်တာနဲ့ ချက်ချင်း spinner ပြ (buffer လုပ်နေတယ်ဆိုတာ သိစေဖို့)
+    showLoading();   // Plyr ဆောက်ပြီးနောက်လည်း ထပ်ပြ (Plyr က DOM ပြန်စီတဲ့အခါ ကျန်မသွားအောင်)
   }
 
   function gateMsg(){
