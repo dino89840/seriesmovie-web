@@ -1205,10 +1205,10 @@ async function _getCurrentUserInner(request, env) {
   const curDevice = (await deviceIdFrom(request, getCookie(request, "cmflix_duid"))).slice(0, 12);
   if (!safeEqual(session.deviceShort, curDevice)) return null;
 
-  if (session.keyId === "ADMIN") {
+  if (session.keyId === "__ADMIN__") {
     // admin session ကိုလည်း sessions table မှာ မှတ်ထားတာမို့ — revoke လုပ်နိုင် / expiry စစ်နိုင်
-    if (await isSessionRevoked(env, "ADMIN", session.sid)) return null;
-    return { keyId: "ADMIN", role: "admin", expires_at: 0, isAdmin: true, sid: session.sid };
+    if (await isSessionRevoked(env, "__ADMIN__", session.sid)) return null;
+    return { keyId: "__ADMIN__", role: "admin", expires_at: 0, isAdmin: true, sid: session.sid };
   }
 
   // ── D1 read ချွေတာ — key + session ကို batch တစ်ခါတည်း ဆွဲ (round-trip ၂ ခု → ၁ ခု) ──
