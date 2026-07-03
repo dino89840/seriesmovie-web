@@ -450,7 +450,7 @@ async function handleTelegramUpdate(env, update) {
 
 
 // ── Signed stream URL ──
-const STREAM_TTL_SEC   = 6 * 3600;
+const STREAM_TTL_SEC   = 4 * 3600;
 
 // Rate limit
 const KEY_LOGIN_MAX_ATTEMPTS = 12;
@@ -1201,21 +1201,38 @@ async function _getCurrentUserInner(request, env) {
   if (!session) return null;
 
   // ── device-short ကို admin/user မခွဲဘဲ အမြဲစစ် (admin cookie ခိုးခံရရင်လည်း device မတူရင် ပိတ်) ──
+  // ⬇️ D1 မထိခင် cookie/token level မှာ အရင်စစ် — မကိုက်ရင် ချက်ချင်း ပြန် (D1 read ချွေတာ)
   const curDevice = (await deviceIdFrom(request, getCookie(request, "cmflix_duid"))).slice(0, 12);
   if (!safeEqual(session.deviceShort, curDevice)) return null;
 
-  if (session.keyId === "__ADMIN__") {
+  if (session.keyId === "ADMIN") {
     // admin session ကိုလည်း sessions table မှာ မှတ်ထားတာမို့ — revoke လုပ်နိုင် / expiry စစ်နိုင်
-    if (await isSessionRevoked(env, "__ADMIN__", session.sid)) return null;
-    return { keyId: "__ADMIN__", role: "admin", expires_at: 0, isAdmin: true, sid: session.sid };
+    if (await isSessionRevoked(env, "ADMIN", session.sid)) return null;
+    return { keyId: "ADMIN", role: "admin", expires_at: 0, isAdmin: true, sid: session.sid };
   }
 
-  if (await isSessionRevoked(env, session.keyId, session.sid)) return null;
+  // ── D1 read ချွေတာ — key + session ကို batch တစ်ခါတည်း ဆွဲ (round-trip ၂ ခု → ၁ ခု) ──
+  let sessionRow, keyRow;
+  try {
+    const [sRes, kRes] = await db(env).batch([
+      db(env).prepare(
+        "SELECT sid FROM sessions WHERE key_id=? AND sid=? AND (expires_at=0 OR expires_at>?)"
+      ).bind(session.keyId, session.sid, Date.now()),
+      db(env).prepare("SELECT * FROM keys WHERE key_id=?").bind(session.keyId),
+    ]);
+    sessionRow = (sRes.results && sRes.results[0]) ? sRes.results[0] : null;
+    keyRow = (kRes.results && kRes.results[0]) ? kRes.results[0] : null;
+  } catch (_) {
+    return null;
+  }
 
-  const k = await getKey(env, session.keyId);
+  // session revoke ဖြစ်နေ (သို့) key ပျောက်နေရင် null
+  if (!sessionRow) return null;
+  const k = rowToKey(keyRow);
   if (!k) return null;
   return { ...k, keyId: session.keyId, isAdmin: false, sid: session.sid };
 }
+
 
 
 function isExpired(user) {
@@ -1563,6 +1580,9 @@ function htmlResponse(body, extraHeaders = {}, status = 200) {
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "strict-origin-when-cross-origin",
     "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
+    "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+    "Cross-Origin-Opener-Policy": "same-origin",
+    "X-XSS-Protection": "1; mode=block",
     ...extraHeaders,
   };
   return new Response(body, { status, headers });
@@ -3315,8 +3335,8 @@ export async function onRequest(context) {
       }));
       return new Response(homePage(slides, sections, user, showWelcome), { headers: { "content-type": "text/html; charset=utf-8" } });
     }
-    // guest → edge cache
-    return cachedHtml(context, request, 30, async () => {
+    // guest → edge cache (၅ မိနစ် — Cloudflare D1 read ချွေတာရန်၊ content အသစ်က ၅ မိနစ်နောက်မှ ပေါ်)
+    return cachedHtml(context, request, 300, async () => {
       const hp = await listHomePreview(env, HOME_PREVIEW_COUNT, 6);
       const sections = [
         { type: "movie",  items: hp.movie },
@@ -3353,7 +3373,7 @@ export async function onRequest(context) {
     if (user) {
       return new Response(await build(user), { headers: { "content-type": "text/html; charset=utf-8" } });
     }
-    return cachedHtml(context, request, 30, () => build(null));
+    return cachedHtml(context, request, 300, () => build(null));
   }
 
 
@@ -3418,6 +3438,25 @@ export async function onRequest(context) {
     const u = await userStreamTag(user);
     if (!v.u || !safeEqual(v.u, u)) {
       return new Response("Link not valid for this session", { status: 403 });
+    }
+
+    // ── HOTLINK / EMBED ကာကွယ်ခြင်း ──
+    // တခြား website (iframe / img / video embed) က signed link ကို hotlink
+    // လုပ်တာ တားဆီးရန် — Referer / Origin ကို ကိုယ့် site domain နဲ့သာ ကိုက်စေမယ်။
+    // (browser တွေ media request တိုင်း Referer ပို့တာမို့ ဒါက effective ဖြစ်တယ်)
+    const originHost = url.host;
+    const referer = request.headers.get("Referer") || "";
+    const originHdr = request.headers.get("Origin") || "";
+    let refererOk = true;
+    if (referer) {
+      try { refererOk = new URL(referer).host === originHost; } catch (_) { refererOk = false; }
+    } else if (originHdr) {
+      try { refererOk = new URL(originHdr).host === originHost; } catch (_) { refererOk = false; }
+    }
+    // Referer/Origin လုံးဝ မပါတဲ့ direct request (ဥပမာ browser address bar) ကို ခွင့်ပြု၊
+    // ပါပြီး တခြား domain ဖြစ်ရင်သာ ပိတ်။
+    if (!refererOk) {
+      return new Response("Hotlink not allowed", { status: 403 });
     }
 
     const real = resolveRealUrl(item, v.s, v.e, v.d === 1);
