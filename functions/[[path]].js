@@ -773,18 +773,23 @@ async function _getCurrentUserInner(request, env) {
   const session = await verifySessionToken(token, env.SESSION_SECRET);
   if (!session) return null;
 
+  // ── device-short ကို admin/user မခွဲဘဲ အမြဲစစ် (admin cookie ခိုးခံရရင်လည်း device မတူရင် ပိတ်) ──
+  const curDevice = (await deviceIdFrom(request, getCookie(request, "cmflix_duid"))).slice(0, 12);
+  if (!safeEqual(session.deviceShort, curDevice)) return null;
+
   if (session.keyId === "__ADMIN__") {
+    // admin session ကိုလည်း sessions table မှာ မှတ်ထားတာမို့ — revoke လုပ်နိုင် / expiry စစ်နိုင်
+    if (await isSessionRevoked(env, "__ADMIN__", session.sid)) return null;
     return { keyId: "__ADMIN__", role: "admin", expires_at: 0, isAdmin: true, sid: session.sid };
   }
 
-  const curDevice = (await deviceIdFrom(request, getCookie(request, "cmflix_duid"))).slice(0, 12);
-  if (!safeEqual(session.deviceShort, curDevice)) return null;
   if (await isSessionRevoked(env, session.keyId, session.sid)) return null;
 
   const k = await getKey(env, session.keyId);
   if (!k) return null;
   return { ...k, keyId: session.keyId, isAdmin: false, sid: session.sid };
 }
+
 
 function isExpired(user) {
   if (!user) return true;
@@ -1745,17 +1750,25 @@ function watchPage(item, user, gated, streams, bookmarked = false, actresses = [
     .ep-play{opacity:.6;font-size:13px}
     .info-side .meta-title{font-size:20px}
       .info-side .meta-title{font-size:20px}
-    .actress-row{margin:18px 0 6px}
-    .actress-row-lbl{font-size:12px;color:var(--mut);font-weight:700;margin-bottom:10px}
-    .actress-chips{display:flex;gap:12px;flex-wrap:wrap}
-    .actress-chip{display:inline-flex;flex-direction:column;align-items:center;gap:7px;text-decoration:none;width:84px;transition:.18s}
-    .actress-chip:hover{transform:translateY(-3px)}
-    .actress-chip-img{width:72px;height:72px;border-radius:50%;background-size:cover;background-position:center;background-color:#0e1830;
-      border:3px solid var(--acc2);display:flex;align-items:center;justify-content:center;font-size:28px;
-      box-shadow:0 4px 14px rgba(255,46,84,.35);transition:.18s}
-    .actress-chip:hover .actress-chip-img{border-color:#fff;box-shadow:0 6px 18px rgba(255,46,84,.55)}
-    .actress-chip-name{font-size:11.5px;color:#e7ecf8;font-weight:600;text-align:center;line-height:1.3;
-      display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+    .actress-row{margin:22px 0 6px}
+    .actress-row-lbl{display:flex;align-items:center;gap:7px;font-size:13px;color:#e7ecf8;font-weight:800;margin-bottom:14px;letter-spacing:.3px}
+    .actress-row-lbl::before{content:"";width:3px;height:15px;border-radius:3px;background:linear-gradient(180deg,var(--acc),var(--acc2))}
+    .actress-chips{display:flex;gap:16px;flex-wrap:wrap}
+    .actress-chip{display:inline-flex;flex-direction:column;align-items:center;gap:9px;text-decoration:none;width:90px;transition:transform .22s cubic-bezier(.2,.8,.2,1)}
+    .actress-chip:hover{transform:translateY(-4px)}
+    .actress-chip-img{position:relative;width:82px;height:82px;border-radius:50%;background-size:cover;background-position:center top;
+      background-color:#0e1830;background-repeat:no-repeat;display:flex;align-items:center;justify-content:center;font-size:30px;
+      box-shadow:0 6px 20px rgba(0,0,0,.5);transition:box-shadow .22s,transform .22s}
+    /* gradient ring — outer border ကို gradient frame အဖြစ် */
+    .actress-chip-img::before{content:"";position:absolute;inset:-3px;border-radius:50%;z-index:-1;
+      background:linear-gradient(140deg,var(--acc),var(--acc2) 45%,#7b2ff2);transition:.22s}
+    /* inner dark ring — ပုံနဲ့ gradient frame ကြား နည်းနည်း ခြားပေး → premium ဆန် */
+    .actress-chip-img::after{content:"";position:absolute;inset:0;border-radius:50%;border:2.5px solid #0b0f1c;pointer-events:none}
+    .actress-chip:hover .actress-chip-img{box-shadow:0 10px 26px rgba(255,46,84,.5);transform:scale(1.04)}
+    .actress-chip:hover .actress-chip-img::before{background:linear-gradient(140deg,#fff,var(--acc2) 55%,#a259ff)}
+    .actress-chip-name{font-size:12px;color:#e7ecf8;font-weight:700;text-align:center;line-height:1.35;
+      display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;transition:color .18s}
+    .actress-chip:hover .actress-chip-name{color:#fff}
     .cm-toast{position:fixed;left:50%;bottom:30px;transform:translateX(-50%) translateY(20px);z-index:9999;
       display:flex;align-items:center;gap:10px;padding:13px 20px;border-radius:13px;
       background:linear-gradient(135deg,#2a1420,#1a1320);border:1px solid #6a2838;
@@ -1790,11 +1803,11 @@ ${topBar(item.type, "", user)}
       ` : ""}
       ${actresses.length ? `
         <div class="actress-row">
-          <div class="actress-row-lbl">👩 မင်းသမီး</div>
+          <div class="actress-row-lbl">မင်းသမီး</div>
           <div class="actress-chips">
             ${actresses.map(a => `
               <a class="actress-chip" href="/actress/${htmlEscape(a.slug)}" title="${htmlEscape(a.name)} ၏ ဇာတ်ကားများ">
-                <span class="actress-chip-img" style="background-image:url('${htmlEscape(a.image || "")}')">${a.image ? "" : "👤"}</span>
+                <span class="actress-chip-img" style="background-image:url('${htmlEscape(a.image || "")}')">${a.image ? "" : `<svg viewBox="0 0 24 24" fill="none" stroke="#6b7896" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:36px;height:36px"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/></svg>`}</span>
                 <span class="actress-chip-name">${htmlEscape(a.name)}</span>
               </a>`).join("")}
           </div>
@@ -2970,7 +2983,7 @@ export async function onRequest(context) {
     }
 
     const u = await userStreamTag(user);
-    if (v.u && !safeEqual(v.u, u)) {
+    if (!v.u || !safeEqual(v.u, u)) {
       return new Response("Link not valid for this session", { status: 403 });
     }
 
@@ -3209,7 +3222,7 @@ export async function onRequest(context) {
       if (!rawKey) {
         return new Response(keyLoginPage(csrfToken, "Key ထည့်ပါ။", "", safeNext), { headers: { "content-type": "text/html; charset=utf-8" }, status: 400 });
       }
-      if (env.ADMIN_KEY && safeEqual(rawKey, normalizeKey(env.ADMIN_KEY))) {
+            if (env.ADMIN_KEY && safeEqual(rawKey, normalizeKey(env.ADMIN_KEY))) {
         // admin login အတွက် သီးသန့် rate limit (IP per 30 min ၅ ခါသာ)
         const adminRl = await rateLimitHit(env, `adminlogin:${clientIp}`, 5, 1800);
         if (adminRl.blocked) {
@@ -3220,10 +3233,19 @@ export async function onRequest(context) {
         const deviceShort = (await deviceIdFrom(request, clientUuid)).slice(0, 12);
         const sid = randomToken(8);
         const token = await createSessionToken("__ADMIN__", deviceShort, env.SESSION_SECRET, sid);
+        // ── admin session ကိုပါ D1 မှာ မှတ် → revoke လုပ်နိုင် + device-bind စစ်နိုင် ──
+        await recordSession(env, "__ADMIN__", sid, {
+          ua: request.headers.get("User-Agent") || "",
+          country: request.headers.get("CF-IPCountry") || "",
+          ip_prefix: ipNetworkPrefix(clientIp),
+          label: shortDeviceLabel(request),
+          admin: true,
+        });
         return new Response(null, { status: 302, headers: { "Location": "/admin", "Set-Cookie": setCookieHeader(COOKIE_NAME, token) } });
       }
+
       const keyObj = await getKey(env, rawKey);
-      if (!keyObj) return new Response(keyLoginPage(csrfToken, "Key မှားနေပါတယ် (သို့) ရှာမတွေ့ပါ။", "", safeNext), { headers: { "content-type": "text/html; charset=utf-8" }, status: 401 });
+      if (!keyObj) return new Response(keyLoginPage(csrfToken, "Key မှားနေပါတယ်", "", safeNext), { headers: { "content-type": "text/html; charset=utf-8" }, status: 401 });
       if (keyObj.disabled) return new Response(expiredPage("ဒီ Key ကို ပိတ်ထားပါသည်။"), { headers: { "content-type": "text/html; charset=utf-8" }, status: 403 });
       if (isKeyExpired(keyObj)) return new Response(expiredPage(), { headers: { "content-type": "text/html; charset=utf-8" }, status: 403 });
       const deviceId = await deviceIdFrom(request, clientUuid);
