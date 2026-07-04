@@ -1893,10 +1893,24 @@ ${footer()}`;
 }
 
 function gridPage(title, activeCat, items, page, totalPages, total, hrefFor, query = "", user = null) {
-  const isCover = activeCat === "random";
-  const cards = isCover
-    ? items.map(coverCardHtml).join("")
-    : items.map(cardHtml).join("");
+  // ── Random Best category → 16:9 cover အားလုံး ──
+  // ── Search / အခြား (activeCat ကွက်လပ်) → item တစ်ခုချင်းစီ၏ type ကိုကြည့်၍
+  //    random ဆို 16:9 cover, ကျန်တာ poster ပြ (random best က 16:9 ၂ပုံတူဖြစ်လို့) ──
+  const forceCover = activeCat === "random";
+  const mixedMode  = activeCat === "";   // search page (category မဟုတ်)
+  const isCover = forceCover;            // grid container class ရွေးရန် (random category only)
+
+  let cards;
+  if (forceCover) {
+    // random category — အားလုံး cover
+    cards = items.map(coverCardHtml).join("");
+  } else if (mixedMode) {
+    // search — random ကားဆို cover, ကျန်တာ poster
+    cards = items.map(it => (it.type === "random" ? coverCardHtml(it) : cardHtml(it))).join("");
+  } else {
+    // movie / series / adult category — အားလုံး poster
+    cards = items.map(cardHtml).join("");
+  }
   const pager = buildPager(page, totalPages, hrefFor);
   const body = `
 ${topBar(activeCat, query, user)}
