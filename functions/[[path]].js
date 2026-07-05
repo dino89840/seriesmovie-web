@@ -2041,7 +2041,7 @@ ${topBar("", "", user)}
   <div class="actress-hero">
     <div class="actress-hero-img" style="background-image:url('${htmlEscape(actress.image || "")}')">${actress.image ? "" : "👤"}</div>
     <div class="actress-hero-info">
-      <div class="actress-hero-lbl">👩 မင်းသမီး</div>
+      <div class="actress-hero-lbl"> မင်းသမီး</div>
       <h1 class="actress-hero-name">${htmlEscape(actress.name || actress.slug)}</h1>
       <div class="actress-hero-count">${items.length} ဇာတ်ကား</div>
     </div>
