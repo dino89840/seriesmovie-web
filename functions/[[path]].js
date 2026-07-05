@@ -2212,7 +2212,9 @@ function watchPage(item, user, gated, streams, bookmarked = false, actresses = [
     .info-side .meta-title{font-size:20px}
       .info-side .meta-title{font-size:20px}
     .actress-row{margin:18px 0 6px}
-    .actress-row-lbl{font-size:12px;color:var(--mut);font-weight:700;margin-bottom:10px}
+    .actress-row-lbl{display:flex;align-items:center;gap:8px;font-size:12.5px;color:#cfd6e8;font-weight:800;letter-spacing:.4px;margin-bottom:12px;text-transform:uppercase}
+    .actress-lbl-ic{width:26px;height:26px;flex:0 0 26px;padding:5px;border-radius:8px;color:#fff;background:linear-gradient(135deg,var(--acc),var(--acc2));box-shadow:0 4px 12px rgba(229,9,20,.4)}
+    .actress-ph-ic{width:30px;height:30px;opacity:.55;color:#8794b3}
     .actress-chips{display:flex;gap:12px;flex-wrap:wrap}
     .actress-chip{display:inline-flex;flex-direction:column;align-items:center;gap:7px;text-decoration:none;width:84px;transition:.18s}
     .actress-chip:hover{transform:translateY(-3px)}
@@ -2256,11 +2258,11 @@ ${topBar(item.type, "", user)}
       ` : ""}
       ${actresses.length ? `
         <div class="actress-row">
-          <div class="actress-row-lbl">👩 မင်းသမီး</div>
+          <div class="actress-row-lbl"><svg class="actress-lbl-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21a8 8 0 0 0-16 0"/><circle cx="12" cy="7" r="4"/></svg> မင်းသမီး</div>
           <div class="actress-chips">
             ${actresses.map(a => `
               <a class="actress-chip" href="/actress/${htmlEscape(a.slug)}" title="${htmlEscape(a.name)} ၏ ဇာတ်ကားများ">
-                <span class="actress-chip-img" style="background-image:url('${htmlEscape(a.image || "")}')">${a.image ? "" : "👤"}</span>
+                <span class="actress-chip-img" style="background-image:url('${htmlEscape(a.image || "")}')">${a.image ? "" : '<svg class="actress-ph-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21a7 7 0 0 0-14 0"/><circle cx="12" cy="8" r="4"/></svg>'}</span>
                 <span class="actress-chip-name">${htmlEscape(a.name)}</span>
               </a>`).join("")}
           </div>
