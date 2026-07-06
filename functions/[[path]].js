@@ -2348,9 +2348,10 @@ ${footer()}`;
       player.on('stalled', showLoading);
       player.on('loadstart', showLoading);
       player.on('canplay', hideLoading);
-      player.on('playing', hideLoading);
+      player.on('playing', function(){ hideLoading(); _retryCount=0; });
       player.on('seeked', hideLoading);
-      player.on('error', hideLoading);
+      // ── COLD ORIGIN FIX: error ဖြစ်ရင် hideLoading မလုပ်ဘဲ auto-retry ──
+      player.on('error', function(){ _onSourceError(); });
       if(GATED){
         player.on('play',function(){ player.pause(); gateMsg(); });
       }
@@ -2361,9 +2362,10 @@ ${footer()}`;
       v.addEventListener('stalled', showLoading);
       v.addEventListener('loadstart', showLoading);
       v.addEventListener('canplay', hideLoading);
-      v.addEventListener('playing', hideLoading);
+      v.addEventListener('playing', function(){ hideLoading(); _retryCount=0; });
       v.addEventListener('seeked', hideLoading);
-      v.addEventListener('error', hideLoading);
+      // ── COLD ORIGIN FIX: error ဖြစ်ရင် auto-retry ──
+      v.addEventListener('error', function(){ _onSourceError(); });
     }
   }
 
@@ -2392,11 +2394,40 @@ ${footer()}`;
     location.href = ${loggedIn ? "'/account'" : "loginUrl"};
   }
 
+  // ── COLD ORIGIN FIX: source load fail ဖြစ်ရင် အလိုအလျောက် ပြန်ကြိုးစား ──
+  // Backblaze/pages.dev origin ပထမတခေါက် cold ဖြစ်တဲ့အခါ ပထမ play က fail တတ်တယ်။
+  // error/stalled ဖြစ်ရင် source ကို ၂ ကြိမ်အထိ auto-retry လုပ်ပြီး ဒုတိယ play မလိုအောင် လုပ်မယ်။
+  var _retryCount=0;
+  var _retryMax=2;
+  var _retryTimer=null;
+
   function applySource(video){
     if(!video) return;
-    showLoading();   // source load စချိန်ကတည်းက spinner ပြ (ပထမကား အမဲကွက် fix)
+    _retryCount=0;                    // source အသစ် စတိုင်း retry ပြန် reset
+    showLoading();
+    _loadSource(video);
+  }
+
+  function _loadSource(video){
     if(player){ player.source={type:'video',sources:[{src:video,type:'video/mp4'}]}; }
     else if(v){ v.src=video; v.load && v.load(); }
+  }
+
+  // error/stalled ဖြစ်ရင် ပြန်ကြိုးစား (cold origin warm ဖြစ်ချိန်ပေး)
+  function _onSourceError(){
+    if(!cur.video) return;
+    if(_retryCount>=_retryMax){ hideLoading(); return; }
+    _retryCount++;
+    showLoading();
+    if(_retryTimer) clearTimeout(_retryTimer);
+    _retryTimer=setTimeout(function(){
+      _loadSource(cur.video);
+      // reload ပြီးရင် auto play (user က play နှိပ်ပြီးသားမို့)
+      setTimeout(function(){
+        if(player){ var p=player.play(); if(p&&p.catch) p.catch(function(){}); }
+        else if(v){ var q=v.play(); if(q&&q.catch) q.catch(function(){}); }
+      }, 150);
+    }, 800*_retryCount);              // 0.8s, 1.6s backoff
   }
 
   function setSource(video, dl, title){
@@ -3521,13 +3552,39 @@ export async function onRequest(context) {
     const ifRange = request.headers.get("If-Range");
     if (ifRange) fwdHeaders.set("If-Range", ifRange);
 
-    let originResp;
-    try {
-      originResp = await fetch(real, { method: "GET", headers: fwdHeaders, redirect: "follow" });
-    } catch (_) {
-      return new Response("Upstream error", { status: 502 });
+    // ── COLD ORIGIN FIX: retry with backoff (Backblaze/pages.dev ပထမတခေါက် cold ဖြစ်တာ ဖြေရှင်း) ──
+    // B2/pages.dev origin က cold ဖြစ်နေရင် ပထမ fetch က နှေး/fail ဖြစ်တတ်တယ်။
+    // ၃ ကြိမ်အထိ retry လုပ်ပြီး origin warm ဖြစ်အောင် ကြိုးစားမယ် → player ပထမ play နှိပ်တာနဲ့ တန်းလာစေရန်။
+    let originResp = null;
+    const maxTries = 3;
+    for (let attempt = 1; attempt <= maxTries; attempt++) {
+      try {
+        // AbortController နဲ့ timeout — origin အရမ်းနှေးရင် ဖျက်ပြီး ပြန်ကြိုးစား
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 20000); // ၂၀ စက္ကန့် timeout
+        originResp = await fetch(real, {
+          method: "GET",
+          headers: fwdHeaders,
+          redirect: "follow",
+          signal: ctrl.signal,
+        });
+        clearTimeout(timer);
+        // 200 / 206 ရရင် အောင်မြင် — loop ရပ်
+        if (originResp.ok || originResp.status === 206) break;
+        // 5xx (origin error) ဆို ပြန်ကြိုးစား၊ 4xx ဆို ဆက်မကြိုးစား (client error)
+        if (originResp.status < 500) break;
+      } catch (e) {
+        originResp = null; // timeout / network error → ပြန်ကြိုးစား
+      }
+      // နောက်တခေါက်မကြိုးခင် ခဏစောင့် (origin warm ဖြစ်ချိန်ပေး)
+      if (attempt < maxTries) {
+        await new Promise((r) => setTimeout(r, 400 * attempt));
+      }
     }
 
+    if (!originResp) {
+      return new Response("Upstream error (cold origin timeout)", { status: 504 });
+    }
     if (!originResp.ok && originResp.status !== 206) {
       return new Response("Upstream unavailable", { status: 502 });
     }
