@@ -11,19 +11,13 @@ const KEY_PREFIX       = "CM";
 const CONTACT_TELEGRAM = "iqowoq";          // @ မပါဘဲ username ပဲ
 const CONTACT_VIBER    = "09688171999";     // Viber phone number
 // ════════════════════════════════════════════════════════════════
-//  TELEGRAM BOT — admin bot for CM FLIX (add / delete / key / check)
-//  • env variables လိုအပ်: TG_BOT_TOKEN, TG_ADMIN_IDS, TG_WEBHOOK_SECRET
-//  • TG_ADMIN_IDS = comma-separated telegram user id (ဥပမာ "12345,67890")
+
 // ════════════════════════════════════════════════════════════════
 const TG_API = "https://api.telegram.org/bot";
 
-// bot user တစ်ယောက်စီရဲ့ conversation state (video တင်တဲ့ multi-step flow အတွက်)
-// Pages Functions က stateless မို့ — D1 table `tg_state` မှာ သိမ်းမယ်
-/* ══════════════════════════════════════════════════
-   TELEGRAM BOT HELPERS
-   ══════════════════════════════════════════════════ */
 
-// admin id စစ် — env.TG_ADMIN_IDS ထဲပါမှ ခွင့်ပြု
+
+
 function tgIsAdmin(env, userId) {
   const ids = String(env.TG_ADMIN_IDS || "")
     .split(",").map(s => s.trim()).filter(Boolean);
@@ -2130,13 +2124,28 @@ function watchPage(item, user, gated, streams, bookmarked = false, actresses = [
     .poster-cover{position:absolute;inset:0;z-index:10;cursor:pointer;background-size:cover;background-position:center center;background-repeat:no-repeat;background-color:#080c18;display:flex;align-items:center;justify-content:center;transition:opacity .25s}
     .poster-cover.hide{display:none}
     .poster-cover-play{display:none}
-    /* ── Loading spinner overlay (Play နှိပ်ပြီး buffer လုပ်နေချိန် ပြ) ── */
-    .cm-loading{position:absolute;inset:0;z-index:15;display:none;align-items:center;justify-content:center;
-      background:rgba(0,0,0,.42);backdrop-filter:blur(1px);pointer-events:none}
+    /* ── Loading spinner overlay (Play နှိပ်ပြီး video စမပြခင် အမြဲပြရန်) ── */
+    .cm-loading{
+      position:absolute;
+      inset:0;
+      z-index:999;
+      display:none;
+      align-items:center;
+      justify-content:center;
+      background:rgba(0,0,0,.48);
+      backdrop-filter:blur(1px);
+      pointer-events:none;
+    }
     .cm-loading.show{display:flex}
-    .cm-loading .cm-ring{width:58px;height:58px;border-radius:50%;
-      border:4px solid rgba(255,255,255,.18);border-top-color:var(--acc2);
-      animation:cmSpin .8s linear infinite;box-shadow:0 4px 20px rgba(0,0,0,.4)}
+    .cm-loading .cm-ring{
+      width:58px;
+      height:58px;
+      border-radius:50%;
+      border:4px solid rgba(255,255,255,.18);
+      border-top-color:var(--acc2);
+      animation:cmSpin .75s linear infinite;
+      box-shadow:0 4px 24px rgba(0,0,0,.55);
+    }
     @keyframes cmSpin{to{transform:rotate(360deg)}}
     .meta-title{font-size:25px;font-weight:900;margin:0 0 8px}
     .meta-cat{display:inline-block;font-size:11px;font-weight:800;padding:4px 11px;border-radius:7px;background:#131b2e;margin-bottom:12px;letter-spacing:.4px}
@@ -2285,8 +2294,53 @@ ${footer()}`;
   var loadEl=document.getElementById('cmLoading');
   var cur={video:'',dl:'',title:''};
 
-  function showLoading(){ if(loadEl) loadEl.classList.add('show'); }
-  function hideLoading(){ if(loadEl) loadEl.classList.remove('show'); }
+  // ── Loading spinner ကို ပထမဆုံး Play မှာပါ မပျောက်အောင် ထိန်းချုပ်ခြင်း ──
+  var loadingSince = 0;
+  var loadingHideTimer = null;
+  var MIN_LOADING_MS = 350;
+
+  function showLoading(){
+    if(!loadEl) return;
+    if(loadingHideTimer){
+      clearTimeout(loadingHideTimer);
+      loadingHideTimer = null;
+    }
+    loadingSince = Date.now();
+    loadEl.classList.add('show');
+  }
+
+  function hideLoading(force){
+    if(!loadEl) return;
+
+    if(force){
+      if(loadingHideTimer){
+        clearTimeout(loadingHideTimer);
+        loadingHideTimer = null;
+      }
+      loadEl.classList.remove('show');
+      return;
+    }
+
+    var elapsed = Date.now() - (loadingSince || Date.now());
+    var wait = Math.max(0, MIN_LOADING_MS - elapsed);
+
+    if(loadingHideTimer) clearTimeout(loadingHideTimer);
+    loadingHideTimer = setTimeout(function(){
+      if(loadEl) loadEl.classList.remove('show');
+    }, wait);
+  }
+
+  function keepLoadingOnTop(){
+    try{
+      var box=document.querySelector('.player-box');
+      if(box && loadEl && loadEl.parentNode !== box){
+        box.appendChild(loadEl);
+      }
+      if(loadEl){
+        loadEl.style.zIndex='999';
+      }
+    }catch(_){}
+  }
 
   // ── Custom toast box (browser alert အစား) ──
   var toastEl=document.getElementById('cmToast');
@@ -2307,8 +2361,10 @@ ${footer()}`;
   function initPlayer(){
     if(player || playerReady) return;
     playerReady=true;
+
     // play နှိပ်မှသာ controls ပါတဲ့ Plyr ကို ဆောက်မယ်
     v.setAttribute('controls','controls');
+
     try{
       player=new Plyr(v,{
         controls:['play-large','play','progress','current-time','duration','mute','volume','settings','pip','airplay','fullscreen'],
@@ -2319,60 +2375,87 @@ ${footer()}`;
         tooltips:{controls:true,seek:true}
       });
     }catch(_){}
+
+    keepLoadingOnTop();
+
+    function firstFrameReady(){
+      // actual video စပြ / frame တက်လာမှ spinner ဖျောက်
+      hideLoading(false);
+    }
+
     if (player) {
       player.on('enterfullscreen', function() {
         if (screen.orientation && screen.orientation.lock) {
           screen.orientation.lock('landscape').catch(function() {});
         }
       });
+
       player.on('exitfullscreen', function() {
         if (screen.orientation && screen.orientation.unlock) {
           screen.orientation.unlock();
         }
       });
-      // ── Loading spinner — buffer/seek လုပ်နေချိန် ပြ၊ ဖွင့်လို့ရရင် ဖျောက် ──
-      player.on('waiting', showLoading);
-      player.on('seeking', showLoading);
-      player.on('stalled', showLoading);
-      player.on('loadstart', showLoading);
-      player.on('canplay', hideLoading);
-      player.on('playing', hideLoading);
-      player.on('seeked', hideLoading);
-      player.on('error', hideLoading);
+
+      // ── Loading spinner —
+      // loadstart / waiting / seeking တွေမှာ ပြ
+      // canplay မှာ မဖျောက်တော့ပါ (ပထမ video မှာ canplay မြန်ပြီး spinner ပျောက်သွားတာ fix)
+      player.on('loadstart', function(){ keepLoadingOnTop(); showLoading(); });
+      player.on('waiting', function(){ keepLoadingOnTop(); showLoading(); });
+      player.on('seeking', function(){ keepLoadingOnTop(); showLoading(); });
+      player.on('stalled', function(){ keepLoadingOnTop(); showLoading(); });
+
+      // actual playback/frame တက်လာမှ ဖျောက်
+      player.on('playing', firstFrameReady);
+      player.on('timeupdate', firstFrameReady);
+      player.on('loadeddata', function(){
+        // autoplay/play promise နောက်ကျနိုင်လို့ loadeddata တစ်ခုတည်းနဲ့ ချက်ချင်းမဖျောက်ဘဲ
+        // video readyState ရှိမှ အနည်းဆုံးအချိန်ပြီးမှ ဖျောက်
+        if(v && v.readyState >= 2) hideLoading(false);
+      });
+
+      player.on('seeked', function(){ hideLoading(false); });
+      player.on('error', function(){ hideLoading(true); });
+
       if(GATED){
         player.on('play',function(){ player.pause(); gateMsg(); });
       }
     } else if (v) {
       // Plyr မရှိရင် native video element event တွေ သုံး
-      v.addEventListener('waiting', showLoading);
-      v.addEventListener('seeking', showLoading);
-      v.addEventListener('stalled', showLoading);
-      v.addEventListener('loadstart', showLoading);
-      v.addEventListener('canplay', hideLoading);
-      v.addEventListener('playing', hideLoading);
-      v.addEventListener('seeked', hideLoading);
-      v.addEventListener('error', hideLoading);
+      v.addEventListener('loadstart', function(){ keepLoadingOnTop(); showLoading(); });
+      v.addEventListener('waiting', function(){ keepLoadingOnTop(); showLoading(); });
+      v.addEventListener('seeking', function(){ keepLoadingOnTop(); showLoading(); });
+      v.addEventListener('stalled', function(){ keepLoadingOnTop(); showLoading(); });
+
+      v.addEventListener('playing', firstFrameReady);
+      v.addEventListener('timeupdate', firstFrameReady);
+      v.addEventListener('loadeddata', function(){
+        if(v.readyState >= 2) hideLoading(false);
+      });
+
+      v.addEventListener('seeked', function(){ hideLoading(false); });
+      v.addEventListener('error', function(){ hideLoading(true); });
     }
   }
 
   function revealPlayer(){
     if(coverEl) coverEl.classList.add('hide');
-    showLoading();   // Plyr မဆောက်ခင် spinner အရင်ပြ
-    initPlayer();
-    showLoading();   // Plyr ဆောက်ပြီးနောက် ထပ်ပြ
 
-    // ── Plyr က DOM ပြန်စီပြီးရင် loading overlay ကို player container ရဲ့
-    //    အပေါ်ဆုံးမှာ ရှိနေအောင် ပြန်ရွှေ့ + z-index မြှင့် (ပထမကား အမဲကွက် fix) ──
+    // cover ဖျောက်တာနဲ့ spinner ကို ချက်ချင်းပြ
+    keepLoadingOnTop();
+    showLoading();
+
+    initPlayer();
+
+    // Plyr က DOM ပြန်စီပြီးနောက် overlay ကို player-box ထဲ အပေါ်ဆုံးမှာ ပြန်တင်
     setTimeout(function(){
-      try{
-        var box=document.querySelector('.player-box');
-        if(box && loadEl){
-          box.appendChild(loadEl);        // Plyr wrapper ရဲ့ နောက်ဆုံးမှာ ထား (အပေါ်ဆုံး layer)
-          loadEl.style.zIndex='30';       // Plyr controls ထက် အပေါ်
-          showLoading();                  // ထပ်မံ ပြသေချာစေ
-        }
-      }catch(_){}
-    }, 60);
+      keepLoadingOnTop();
+      showLoading();
+    }, 30);
+
+    setTimeout(function(){
+      keepLoadingOnTop();
+      showLoading();
+    }, 120);
   }
 
   function gateMsg(){
@@ -2382,9 +2465,35 @@ ${footer()}`;
 
   function applySource(video){
     if(!video) return;
-    showLoading();   // source load စချိန်ကတည်းက spinner ပြ (ပထမကား အမဲကွက် fix)
-    if(player){ player.source={type:'video',sources:[{src:video,type:'video/mp4'}]}; }
-    else if(v){ v.src=video; v.load && v.load(); }
+
+    keepLoadingOnTop();
+    showLoading();
+
+    // source တူနေရင် ထပ်ပြီး reset မလုပ်ပါ — ပထမ Play မှာ flicker/black ဖြစ်တာ လျော့စေတယ်
+    var currentSrc = '';
+    try{
+      currentSrc = v ? (v.currentSrc || v.getAttribute('src') || '') : '';
+    }catch(_){}
+
+    if(currentSrc && currentSrc === video){
+      return;
+    }
+
+    if(player){
+      player.source={
+        type:'video',
+        sources:[{src:video,type:'video/mp4'}]
+      };
+    } else if(v){
+      v.src=video;
+      if(v.load) v.load();
+    }
+
+    // source set ပြီးပြီးချင်း event မလာသေးတဲ့ browser တွေအတွက် spinner ထပ်ပြ
+    setTimeout(function(){
+      keepLoadingOnTop();
+      showLoading();
+    }, 50);
   }
 
   function setSource(video, dl, title){
@@ -2402,8 +2511,24 @@ ${footer()}`;
   })();` : ``}
 
   function tryPlay(){
-    if(player){ var p=player.play(); if(p&&p.catch) p.catch(function(){}); }
-    else if(v){ var q=v.play(); if(q&&q.catch) q.catch(function(){}); }
+    keepLoadingOnTop();
+    showLoading();
+
+    if(player){
+      var p=player.play();
+      if(p && p.catch){
+        p.catch(function(){
+          hideLoading(true);
+        });
+      }
+    } else if(v){
+      var q=v.play();
+      if(q && q.catch){
+        q.catch(function(){
+          hideLoading(true);
+        });
+      }
+    }
   }
 
   // thumbnail cover ကို နှိပ်ရင် play (Viki ပုံစံ)
