@@ -1,6 +1,3 @@
-deployလုပ်မရပဲ failed ဖြစ်နေလို့ ကုဒ်ကိုစစ်ဆေးပီးတော့ ပြင်ရမယ့်နေရာ ကုဒ်အပြည့်စုံ ပြောပေးပါ
-
-
 // ── Session / key constants ──
 const SESSION_HOURS    = 24 * 30;
 const COOKIE_NAME      = "__Host-cmflix_sess";
