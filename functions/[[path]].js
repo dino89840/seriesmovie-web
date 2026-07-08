@@ -1,4 +1,4 @@
-// 
+
 
 // ── Session / key constants ──
 const SESSION_HOURS    = 24 * 30;
@@ -777,13 +777,24 @@ async function lookupActress(env, name) {
   const pageUrl = `https://javtiful.com/actress/${slug}`;
   let html = "";
   try {
-    const resp = await fetch(pageUrl, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml",
-      },
-      redirect: "follow",
-    });
+    // ── timeout ၈ စက္ကန့် — ပြင်ပ site ပြန်မလာရင် page load မ hang အောင် ──
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 8000);
+    let resp;
+    try {
+      resp = await fetch(pageUrl, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+          "Accept": "text/html,application/xhtml+xml",
+        },
+        redirect: "follow",
+        signal: ctrl.signal,
+        // Cloudflare edge cache — actress page ကို ၇ ရက် cache (ထပ်ခေါ်စရာ မလို → subrequest ချွေတာ)
+        cf: { cacheTtl: 604800, cacheEverything: true },
+      });
+    } finally {
+      clearTimeout(timer);
+    }
     if (!resp.ok) return { ok: false, error: `မင်းသမီး ရှာမတွေ့ပါ (HTTP ${resp.status})` };
     html = await resp.text();
   } catch (_) {
@@ -1556,16 +1567,33 @@ function brandLogo() {
 /* ══════════════════════════════════════════════════
    SECURE HTML RESPONSE HELPER
    ══════════════════════════════════════════════════ */
+// ── Content-Security-Policy — inline script/style သုံးထားလို့ 'unsafe-inline' ထည့်ရ ──
+//    ပြင်ပ resource — Plyr CDN, TMDB images, actress images, video source တွေကို ခွင့်ပြု
+const CSP_POLICY = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline' https://cdn.plyr.io",
+  "style-src 'self' 'unsafe-inline' https://cdn.plyr.io",
+  "img-src 'self' data: https: blob:",
+  "media-src 'self' blob: https:",
+  "connect-src 'self' https:",
+  "font-src 'self' data:",
+  "frame-ancestors 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "object-src 'none'",
+  "upgrade-insecure-requests",
+].join("; ");
+
 function htmlResponse(body, extraHeaders = {}, status = 200) {
   const headers = {
     "content-type": "text/html; charset=utf-8",
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "strict-origin-when-cross-origin",
-    "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
-    "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+    "Permissions-Policy": "geolocation=(), microphone=(), camera=(), payment=(), usb=()",
+    "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
     "Cross-Origin-Opener-Policy": "same-origin",
-    "X-XSS-Protection": "1; mode=block",
+    "Content-Security-Policy": CSP_POLICY,
     ...extraHeaders,
   };
   return new Response(body, { status, headers });
@@ -3530,9 +3558,12 @@ export async function onRequest(context) {
     const { items: slice, total } = await searchItemsPaged(env, q, page, ITEMS_PER_PAGE);
     const totalPages = Math.max(1, Math.ceil(total / ITEMS_PER_PAGE));
     if (page > totalPages) page = totalPages;
+    const searchHeaders = { "content-type": "text/html; charset=utf-8" };
+    // guest ဆို search ရလဒ်ကို browser မှာ ခဏ (၆၀ စက္ကန့်) cache — ထပ်ရိုက်ရင် မြန်
+    if (!user) searchHeaders["Cache-Control"] = "public, max-age=60";
     return new Response(
       gridPage(`🔍 "${q}"`, "", slice, page, totalPages, total, (p) => `/search?q=${encodeURIComponent(q)}&page=${p}`, q, user),
-      { headers: { "content-type": "text/html; charset=utf-8" } }
+      { headers: searchHeaders }
     );
   }
 
@@ -3582,6 +3613,13 @@ export async function onRequest(context) {
     if (!v.u || !safeEqual(v.u, u)) {
       return new Response("Link not valid for this session", { status: 403 });
     }
+
+    // ── Stream abuse ကာကွယ် — user တစ်ယောက် ၁ မိနစ်အတွင်း request အလွန်များရင် ကန့်သတ် ──
+    // (edge cache HIT တွေက ဒီအောက်မရောက်ဘဲ ရှေ့မှာ ပြန်ပြီးသားမို့ normal playback မထိခိုက်)
+    try {
+      const srl = await rateLimitHit(env, `stream:${user.keyId}`, 240, 60);
+      if (srl.blocked) return new Response("Too many requests", { status: 429 });
+    } catch (_) {}
 
     // ── HOTLINK / EMBED ကာကွယ်ခြင်း ──
     // တခြား website (iframe / img / video embed) က signed link ကို hotlink
@@ -3636,7 +3674,13 @@ export async function onRequest(context) {
 
     let originResp;
     try {
-      originResp = await fetch(real, { method: "GET", headers: fwdHeaders, redirect: "follow" });
+      // stream (download မဟုတ်) initial chunk ကို Cloudflare origin cache မှာပါ သိမ်း
+      // → edge cache miss ဖြစ်တောင် origin fetch subrequest ချွေတာ
+      const fetchOpts = { method: "GET", headers: fwdHeaders, redirect: "follow" };
+      if (cacheable) {
+        fetchOpts.cf = { cacheTtl: 86400, cacheEverything: true };
+      }
+      originResp = await fetch(real, fetchOpts);
     } catch (_) {
       return new Response("Upstream error", { status: 502 });
     }
@@ -3697,8 +3741,12 @@ export async function onRequest(context) {
 
     // ── stream (download မဟုတ်) → edge cache မှာ သိမ်းမယ် ──
     outHeaders.set("Content-Disposition", "inline");
-    outHeaders.set("Cache-Control", "public, max-age=86400"); // edge မှာ ၁ ရက် cache
+    // edge + browser cache — video chunk တွေကို browser ကပါ ကြာကြာသိမ်း → seek/replay မြန်
+    outHeaders.set("Cache-Control", "public, max-age=86400, s-maxage=604800, immutable");
     outHeaders.set("X-CMFlix-Cache", "MISS");
+    // CORS — video element cross-origin မှာ ပြဿနာ မဖြစ်အောင်
+    outHeaders.set("Access-Control-Allow-Origin", url.host ? `https://${url.host}` : "*");
+    outHeaders.set("Timing-Allow-Origin", "*");
 
     if (cacheable && cacheKey && (originResp.status === 200 || originResp.status === 206)) {
       // response body ကို နှစ်ခွဲ — တစ်ခု client ကို၊ တစ်ခု cache ကို
@@ -4006,16 +4054,8 @@ export async function onRequest(context) {
       const isDraft = String(form.save_mode || "publish") === "draft";
       const data = { id, type, title, poster, slide_image, note, actress, created_at: Date.now(), published: isDraft ? 0 : 1 };
       // မင်းသမီးနာမည်တွေအတွက် ပုံကို cache ထဲ ကြိုသိမ်း (watch page မှာ ပုံပေါ်ဖို့)
-      for (const nm of parseActressNames(actress)) {
-        const slug = actressNameToSlug(nm);
-        if (slug && !(await getActressCache(env, slug))) {
-          try { await lookupActress(env, nm); } catch (_) {}
-        }
-      }
-      if (type === "series") {
-        const r = sanitizeSeasons(form.seasons_json || "");
-        if (!r.ok) return redirectInfo(r.err);
-        data.seasons = r.seasons;
+      // ⬇️ item ကို အရင် save ပြီးမှ background (waitUntil) မှာ lookup လုပ် → response မကြာ + subrequest limit မဖိ
+      const _actressNamesCreate = parseActressNames(actress);
       } else {
         const video_url = String(form.video_url || "").trim().slice(0, 1000);
         const download_url = String(form.download_url || "").trim().slice(0, 1000);
@@ -4025,6 +4065,15 @@ export async function onRequest(context) {
         data.download_url = download_url || video_url;
       }
       await putItem(env, id, data);
+      // actress ပုံ lookup ကို background မှာ (response မစောင့်စေဘဲ) — subrequest limit မဖိ
+      context.waitUntil((async () => {
+        for (const nm of _actressNamesCreate) {
+          const slug = actressNameToSlug(nm);
+          if (slug && !(await getActressCache(env, slug))) {
+            try { await lookupActress(env, nm); } catch (_) {}
+          }
+        }
+      })());
       return redirectInfo(isDraft
         ? `"${title}" ကို Draft အဖြစ် သိမ်းပြီးပါပြီ (မပြသေးပါ)။`
         : `"${title}" တင်ပြီးပါပြီ။`);
