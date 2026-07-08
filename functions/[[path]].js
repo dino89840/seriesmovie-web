@@ -1,3 +1,4 @@
+deployလုပ်မရပဲ failed ဖြစ်နေလို့ ကုဒ်ကိုစစ်ဆေးပီးတော့ ပြင်ရမယ့်နေရာ ကုဒ်အပြည့်စုံ ပြောပေးပါ
 
 
 // ── Session / key constants ──
@@ -4056,6 +4057,11 @@ export async function onRequest(context) {
       // မင်းသမီးနာမည်တွေအတွက် ပုံကို cache ထဲ ကြိုသိမ်း (watch page မှာ ပုံပေါ်ဖို့)
       // ⬇️ item ကို အရင် save ပြီးမှ background (waitUntil) မှာ lookup လုပ် → response မကြာ + subrequest limit မဖိ
       const _actressNamesCreate = parseActressNames(actress);
+
+      if (type === "series") {
+        const r = sanitizeSeasons(form.seasons_json || "");
+        if (!r.ok) return redirectInfo(r.err);
+        data.seasons = r.seasons;
       } else {
         const video_url = String(form.video_url || "").trim().slice(0, 1000);
         const download_url = String(form.download_url || "").trim().slice(0, 1000);
