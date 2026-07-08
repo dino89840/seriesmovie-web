@@ -1,15 +1,4 @@
-// functions/[[path]].js  — PART 1 of 2
-// ════════════════════════════════════════════════════════════════
-//  CM FLIX — Self-hosted Movie / Series streaming app  (D1 EDITION)
-//  • Storage: Cloudflare D1 (SQLite)  — binding name: DB
-//  • Signed / expiring URL streaming (real R2/mp4 link NEVER in HTML)
-//  • Key-only login (admin-created keys, device-limited)
-//  • Categories: R Mosaic / Series / 21+ mmsub (Series: Season → Episode)
-//  • Slider supports separate landscape banner image (slide_image)
-//  • Modern Plyr player + polished UI / logo
-//  • My Key chip shows premium days-left (P-NDay) when logged in
-//  • TMDB API integration (auto-fetch poster/backdrop/overview)
-// ════════════════════════════════════════════════════════════════
+// 
 
 // ── Session / key constants ──
 const SESSION_HOURS    = 24 * 30;
@@ -2173,9 +2162,8 @@ function watchPage(item, user, gated, streams, bookmarked = false, actresses = [
     .gate a{color:var(--acc2);font-weight:800}
     .now-playing{margin-top:12px;color:var(--acc2);font-weight:700;font-size:14px;min-height:18px}
     .seasons{margin-top:22px}
-    .season-tabs{display:flex;gap:8px;overflow-x:auto;padding-bottom:10px;scrollbar-width:none}
-    .season-tabs::-webkit-scrollbar{display:none}
-    .season-tab{flex:0 0 auto;padding:8px 17px;border-radius:10px;border:1px solid var(--line);background:#131b2e;color:#fff;font-weight:700;font-size:13.5px;cursor:pointer;font-family:inherit;transition:.15s}
+    .season-tabs{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding-bottom:10px}
+    .season-tab{padding:8px 10px;border-radius:10px;border:1px solid var(--line);background:#131b2e;color:#fff;font-weight:700;font-size:13.5px;cursor:pointer;font-family:inherit;transition:.15s;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     .season-tab.on{background:linear-gradient(135deg,var(--acc),var(--acc2));border-color:transparent}
     .ep-list{
   display:none;
