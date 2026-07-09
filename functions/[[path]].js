@@ -686,7 +686,14 @@ async function makeStreamUrl(env, itemId, { s = -1, e = -1, download = false, u 
   qs.set("exp", String(exp));
   if (u) qs.set("u", u);
   qs.set("sig", sig);
-  return `/stream/${encodeURIComponent(itemId)}?${qs.toString()}`;
+  const localPath = `/stream/${encodeURIComponent(itemId)}?${qs.toString()}`;
+  // ── play (download မဟုတ်) ဆို page2 (proxy) ကို တိုက်ရိုက်လင့်ခ် → page1 ကို browser မဝင်တော့ ──
+  // download ကတော့ filename header အတွက် page1 ကို ဆက်သုံး (local path)
+  if (!download) {
+    const proxyBase = pickStreamProxy(itemId);
+    if (proxyBase) return `${proxyBase}${localPath}`;
+  }
+  return localPath;
 }
 
 async function verifyStreamSig(env, itemId, params) {
@@ -1411,13 +1418,21 @@ function isHttpUrl(u) {
    ══════════════════════════════════════════════════ */
 const STREAM_PROXY_POOL = [
   "https://stream.cmflix.kdns.fr",
-  // "https://cmflix-proxy2.pages.dev",
+  "https://cmflix.kdns.fr",
 ];
 
-function pickStreamProxy() {
+// video id ကို hash → proxy ရွေး (တူညီတဲ့ video → တူညီတဲ့ proxy → cache hit ကောင်း)
+function pickStreamProxy(seedId) {
   if (!Array.isArray(STREAM_PROXY_POOL) || STREAM_PROXY_POOL.length === 0) return null;
-  const i = Math.floor(Math.random() * STREAM_PROXY_POOL.length);
-  return String(STREAM_PROXY_POOL[i] || "").replace(/\/+$/, "");
+  let idx;
+  if (seedId) {
+    let h = 0;
+    for (let i = 0; i < seedId.length; i++) h = (h * 31 + seedId.charCodeAt(i)) >>> 0;
+    idx = h % STREAM_PROXY_POOL.length;
+  } else {
+    idx = Math.floor(Math.random() * STREAM_PROXY_POOL.length);
+  }
+  return String(STREAM_PROXY_POOL[idx] || "").replace(/\/+$/, "");
 }
 
 /* ══════════════════════════════════════════════════
@@ -3732,8 +3747,9 @@ export async function onRequest(context) {
     // video body ကို အဲဒီ worker က ဆွဲ/ပြန်ပို့စေမယ် → ပင်မ worker မှာ heavy proxy fetch subrequest မကုန်။
     // download (v.d===1) ကိုတော့ redirect မလုပ်ဘဲ ပင်မ worker ကိုယ်တိုင် လုပ် (filename header မှန်စေရန်)။
     // proxy worker မှာ D1 share ထားတာမို့ real URL ကို ပို့စရာ မလို — item id + signed params ပဲ ပို့ (real URL မပေါ်)။
-    if (v.d !== 1) {
-      const proxyBase = pickStreamProxy();
+          if (v.d !== 1) {
+      const proxyBase = pickStreamProxy(id);
+
       if (proxyBase) {
         const proxyUrl = `${proxyBase}/stream/${encodeURIComponent(id)}?${url.searchParams.toString()}`;
         return new Response(null, {
