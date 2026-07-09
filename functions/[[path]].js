@@ -1410,7 +1410,7 @@ function isHttpUrl(u) {
    • ⚠️ URL နောက်မှာ slash ("/") မထည့်ပါနဲ့
    ══════════════════════════════════════════════════ */
 const STREAM_PROXY_POOL = [
-  "https://cmflix-proxy1.pages.dev",
+  "https://stream.cmflix.kdns.fr",
   // "https://cmflix-proxy2.pages.dev",
 ];
 
