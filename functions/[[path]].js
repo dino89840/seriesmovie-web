@@ -482,6 +482,31 @@ async function lazyCleanup(env) {
 }
 
 /* ══════════════════════════════════════════════════
+   APP SETTINGS  (D1: table `app_settings`)
+   maintenance mode ကို DB ထဲ သိမ်း → admin web ကနေ on/off
+   ══════════════════════════════════════════════════ */
+async function getSetting(env, key) {
+  try {
+    const row = await db(env).prepare("SELECT value FROM app_settings WHERE skey=?").bind(key).first();
+    return row ? row.value : null;
+  } catch (_) { return null; }
+}
+
+async function setSetting(env, key, value) {
+  await db(env).prepare(
+    `INSERT INTO app_settings (skey, value, updated_at) VALUES (?,?,?)
+     ON CONFLICT(skey) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`
+  ).bind(key, String(value), Date.now()).run();
+}
+
+// maintenance ဖွင့်/ပိတ် စစ် (DB ထဲက "1" ဆို ဖွင့်ထား)
+async function isMaintenanceOn(env) {
+  try {
+    return (await getSetting(env, "maintenance")) === "1";
+  } catch (_) { return false; }
+}
+
+/* ══════════════════════════════════════════════════
    CRYPTO HELPERS
    ══════════════════════════════════════════════════ */
 async function sha256Hex(str) {
@@ -2689,6 +2714,19 @@ function expiredPage(reason = "") {
   return pageShell("Expired — CM FLIX", body, { extraCss: AUTH_CSS });
 }
 
+// maintenance page — user တွေ မြင်ရမယ့် "ပြုပြင်နေဆဲ" စာမျက်နှာ
+function maintenancePageHtml() {
+  const body = `
+<div class="auth-wrap"><div class="auth-card" style="text-align:center">
+  <div class="auth-logo">${logoMark()}</div>
+  <h1>🔧 ပြုပြင်နေဆဲ</h1>
+  <p class="sub">ဝဘ်ဆိုက်ကို ယာယီ ပြုပြင်နေပါသည်။<br>ခဏအကြာတွင် ပြန်လည် အသုံးပြုနိုင်ပါမည်။<br>ကျေးဇူးတင်ပါသည်။</p>
+  <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--line)">${contactButtons()}</div>
+</div></div>`;
+  return pageShell("Maintenance — CM FLIX", body, { extraCss: AUTH_CSS });
+}
+
+
 function accountPage(user, info = "", error = "", showWelcome = false) {
   const exp = user.expires_at
     ? new Date(user.expires_at).toLocaleString("en-GB", { hour12: false, timeZone: "Asia/Yangon" })
@@ -2907,7 +2945,7 @@ function accountPage(user, info = "", error = "", showWelcome = false) {
 /* ══════════════════════════════════════════════════
    ADMIN PAGE
    ══════════════════════════════════════════════════ */
-function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], itPage = 1, itTotalPages = 1, itQuery = "", itTotal = 0, itType = "", tmdbOn = false, draftCount = 0) {
+function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], itPage = 1, itTotalPages = 1, itQuery = "", itTotal = 0, itType = "", tmdbOn = false, draftCount = 0, maintenanceOn = false) {
   const keyRows = keys.map(k => {
     const exp = k.expires_at ? new Date(k.expires_at).toLocaleString("en-GB", { hour12: false, timeZone: "Asia/Yangon" }) : "—";
     const active = (k.expires_at && Date.now() < k.expires_at && !k.disabled);
@@ -3074,6 +3112,21 @@ function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], i
       <input type="hidden" name="csrf_token" value="${htmlEscape(csrfToken)}">
       <button type="submit" class="btn" style="width:auto;margin:0;padding:13px 24px;background:linear-gradient(135deg,#0f9d58,#22c55e);box-shadow:0 6px 16px rgba(34,197,94,.4)">🚀 Publish All Drafts (${draftCount})</button>
     </form>` : ''}
+  </div>
+
+  <!-- ════ MAINTENANCE MODE TOGGLE ════ -->
+  <div style="background:${maintenanceOn ? '#2a1408' : '#0e1830'};border:1px solid ${maintenanceOn ? '#8a5a14' : 'var(--line)'};border-radius:13px;padding:16px;margin-bottom:18px;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap">
+    <div>
+      <div style="font-weight:800;color:${maintenanceOn ? '#ffcf80' : '#cef'};font-size:15px">🔧 Maintenance Mode — ${maintenanceOn ? '<span style="color:#ff9f40">🔴 ဖွင့်ထားသည် (user ဝင်မရ)</span>' : '<span style="color:#7df0a8">🟢 ပိတ်ထားသည် (ပုံမှန်)</span>'}</div>
+      <div style="font-size:12px;color:var(--mut);margin-top:4px">${maintenanceOn ? 'user တွေ ဝဘ်ဆိုက်ကို ဝင်လို့မရပါ။ admin ပဲ ဝင်နိုင်သည်။ ပြင်ဆင်ပြီးရင် ပိတ်ပါ။' : 'ဖွင့်လိုက်ရင် user တွေ "ပြုပြင်နေဆဲ" page မြင်ရမည်။ admin ပဲ ဝင်နိုင်တော့မည်။'}</div>
+    </div>
+    <form method="POST" action="/admin/maintenance" style="margin:0">
+      <input type="hidden" name="csrf_token" value="${htmlEscape(csrfToken)}">
+      <input type="hidden" name="state" value="${maintenanceOn ? 'off' : 'on'}">
+      <button type="submit" class="btn" style="width:auto;margin:0;padding:13px 24px;background:${maintenanceOn ? 'linear-gradient(135deg,#0f9d58,#22c55e)' : 'linear-gradient(135deg,#c43,#e50914)'}" onclick="return confirm('${maintenanceOn ? 'Maintenance mode ပိတ်မှာ သေချာပါသလား? (user တွေ ပြန်ဝင်လို့ရမည်)' : 'Maintenance mode ဖွင့်မှာ သေချာပါသလား? (user တွေ ဝင်မရတော့ပါ)'}')">
+        ${maintenanceOn ? '✅ Maintenance ပိတ်မယ်' : '🔧 Maintenance ဖွင့်မယ်'}
+      </button>
+    </form>
   </div>
 
   <!-- ════ CONTENT LIST ════ -->
@@ -3483,7 +3536,30 @@ export async function onRequest(context) {
   }
 
 
+    // Telegram ကို ချက်ချင်း 200 ပြန်ပေးဖို့ — processing ကို background မှာ
+    context.waitUntil(handleTelegramUpdate(env, update).catch(() => {}));
+    return new Response("ok", { status: 200 });
+  }
+
+  // ───────────── MAINTENANCE MODE CHECK ─────────────
+  // DB ထဲ maintenance ဖွင့်ထားရင် — admin မဟုတ်တဲ့သူ အားလုံးကို "ပြုပြင်နေဆဲ" page ပြ
+  if (await isMaintenanceOn(env)) {
+    // admin login ဝင်ဖို့ /login, /logout, telegram webhook, admin routes တွေကတော့ အမြဲ ဖွင့်ထား
+    const mAllow = path === "/login" || path === "/logout" ||
+                   path === "/tg/webhook" || path === "/admin" || path.startsWith("/admin/");
+    if (!mAllow) {
+      const mUser = await getCurrentUser(request, env);
+      if (!mUser || !mUser.isAdmin) {
+        return new Response(maintenancePageHtml(), {
+          status: 503,
+          headers: { "content-type": "text/html; charset=utf-8", "Retry-After": "3600" },
+        });
+      }
+    }
+  }
+
    // ───────────── HOME ─────────────
+
   if (path === "/" && method === "GET") {
     const user = await getCurrentUser(request, env);
     // login ဝင်ထားရင် welcome box ပါတာမို့ cache မလုပ်၊ guest ဆို cache (၃၀ စက္ကန့်)
@@ -4005,8 +4081,9 @@ export async function onRequest(context) {
       if (itPage > itTotalPages) itPage = itTotalPages;
       const newKey = url.searchParams.get("newkey") || "";
       const info = url.searchParams.get("info") || "";
+      const maintOn = await isMaintenanceOn(env);
       return new Response(
-        adminPage(keys, stats, csrfToken, newKey, info, items, itPage, itTotalPages, itQuery, itTotal, isValidCategory(itType) ? itType : "", tmdbConfigured(env), draftCount),
+        adminPage(keys, stats, csrfToken, newKey, info, items, itPage, itTotalPages, itQuery, itTotal, isValidCategory(itType) ? itType : "", tmdbConfigured(env), draftCount, maintOn),
         { headers: { "content-type": "text/html; charset=utf-8", ...setCsrf } }
       );
     }
@@ -4148,6 +4225,18 @@ export async function onRequest(context) {
       const n = await publishAllDrafts(env);
       return redirectInfo(n > 0 ? `Draft ${n} ကား အားလုံးကို Publish တင်ပြီးပါပြီ။ 🚀` : "Publish တင်စရာ Draft မရှိပါ။");
     }
+    
+    // MAINTENANCE MODE TOGGLE — admin web ကနေ on/off
+    if (path === "/admin/maintenance" && method === "POST") {
+      const form = await parseForm(request);
+      if (!(await verifyCsrf(request, form))) return new Response("CSRF failed", { status: 403 });
+      const turnOn = String(form.state || "") === "on";
+      await setSetting(env, "maintenance", turnOn ? "1" : "0");
+      return redirectInfo(turnOn
+        ? "🔧 Maintenance mode ဖွင့်လိုက်ပါပြီ — user တွေ ဝင်လို့မရတော့ပါ (admin ပဲ ဝင်ရ)။"
+        : "✅ Maintenance mode ပိတ်လိုက်ပါပြီ — user တွေ ပြန်ဝင်လို့ရပါပြီ။");
+    }
+
 
     // CREATE KEY(S)
     if (path === "/admin/create" && method === "POST") {
