@@ -3535,12 +3535,6 @@ export async function onRequest(context) {
     return new Response("ok", { status: 200 });
   }
 
-
-    // Telegram ကို ချက်ချင်း 200 ပြန်ပေးဖို့ — processing ကို background မှာ
-    context.waitUntil(handleTelegramUpdate(env, update).catch(() => {}));
-    return new Response("ok", { status: 200 });
-  }
-
   // ───────────── MAINTENANCE MODE CHECK ─────────────
   // DB ထဲ maintenance ဖွင့်ထားရင် — admin မဟုတ်တဲ့သူ အားလုံးကို "ပြုပြင်နေဆဲ" page ပြ
   if (await isMaintenanceOn(env)) {
