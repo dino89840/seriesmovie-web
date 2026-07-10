@@ -1381,15 +1381,36 @@ function premiumLabel(user) {
 /* Rate limit (D1: table `rate_limits`) */
 async function rateLimitHit(env, key, max, windowSec) {
   const now = Math.floor(Date.now() / 1000);
-  const row = await db(env).prepare("SELECT count, reset_at FROM rate_limits WHERE rl_key=?").bind(key).first();
-  let count = 0, reset = now + windowSec;
-  if (row && row.reset_at > now) { count = row.count; reset = row.reset_at; }
-  count += 1;
-  await db(env).prepare(
-    `INSERT INTO rate_limits (rl_key, count, reset_at) VALUES (?,?,?)
-     ON CONFLICT(rl_key) DO UPDATE SET count=excluded.count, reset_at=excluded.reset_at`
-  ).bind(key, count, reset).run();
-  return { blocked: count > max, count, reset };
+  const newReset = now + windowSec;
+
+  const row = await db(env).prepare(
+    `INSERT INTO rate_limits (rl_key, count, reset_at)
+     VALUES (?, 1, ?)
+     ON CONFLICT(rl_key) DO UPDATE SET
+       count = CASE
+         WHEN rate_limits.reset_at <= ? THEN 1
+         ELSE rate_limits.count + 1
+       END,
+       reset_at = CASE
+         WHEN rate_limits.reset_at <= ? THEN excluded.reset_at
+         ELSE rate_limits.reset_at
+       END
+     RETURNING count, reset_at`
+  ).bind(
+    key,
+    newReset,
+    now,
+    now
+  ).first();
+
+  const count = Number(row?.count || 1);
+  const reset = Number(row?.reset_at || newReset);
+
+  return {
+    blocked: count > max,
+    count,
+    reset,
+  };
 }
 /* ══════════════════════════════════════════════════
    PREMIUM SVG ICONS HELPER
