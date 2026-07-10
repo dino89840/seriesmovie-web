@@ -1,3 +1,8 @@
+ဒ
+
+
+
+
 // ── Session / key constants ──
 const SESSION_HOURS    = 24 * 30;
 const COOKIE_NAME      = "__Host-cmflix_sess";
@@ -1402,12 +1407,31 @@ function isHttpUrl(u) {
    DOMAIN REWRITE  — link domain အဟောင်း→အသစ် အလိုအလျောက်ပြောင်း
    • database ထဲက မူရင်း link မထိ — သုံးတဲ့အချိန်မှ ပြောင်းပေးတယ်
    • နောက်နောင် domain ပြောင်းရင် ဒီ map ထဲ စာတစ်ကြောင်းပဲ ထပ်ထည့်ရုံ
+   /* ══════════════════════════════════════════════════
+   STREAM PROXY POOL — video proxy worker တွေ အလှည့်ကျ ဝေချ
+   • ပင်မ worker (page1) မှာ subrequest/CPU မကုန်အောင် video proxy fetch ကို
+     တခြား proxy worker တွေဆီ 302 redirect နဲ့ ကျပန်း ဝေချ
+   • proxy worker အသစ် ထပ်ထည့်ချင်ရင် — ဒီ list ထဲ base URL တစ်ကြောင်း ထပ်ဖြည့်ရုံ
+   • ⚠️ URL နောက်မှာ slash ("/") မထည့်ပါနဲ့
+   ══════════════════════════════════════════════════ */
+const STREAM_PROXY_POOL = [
+  "https://wwwa.cmflix.kdns.fr",
+  "https://wwwk.cmflix.kdns.fr",
+];
+
+function pickStreamProxy() {
+  if (!Array.isArray(STREAM_PROXY_POOL) || STREAM_PROXY_POOL.length === 0) return null;
+  const i = Math.floor(Math.random() * STREAM_PROXY_POOL.length);
+  return String(STREAM_PROXY_POOL[i] || "").replace(/\/+$/, "");
+}
+
+/* ══════════════════════════════════════════════════
+   DOMAIN REWRITE — link domain အဟောင်း→အသစ် အလိုအလျောက်ပြောင်း
    ══════════════════════════════════════════════════ */
 const DOMAIN_REWRITES = [
   { from: "stream.cmapp.tv", to: "stream.cmreel.com" },
-  // နောက်ထပ် domain ပြောင်းရင် ဒီအောက်မှာ ထပ်ထည့်ပါ၊ ဥပမာ —
-  // { from: "stream.cmreel.com", to: "stream.cmnew.com" },
 ];
+
 
 function rewriteDomain(rawUrl) {
   let u = String(rawUrl || "");
@@ -3708,6 +3732,23 @@ export async function onRequest(context) {
       return new Response("Hotlink not allowed", { status: 403 });
     }
 
+    // ── PROXY POOL REDIRECT ──
+    // proxy pool သတ်မှတ်ထားရင် — ဒီ signed request ကို random proxy worker ဆီ 302 redirect လုပ်ပြီး
+    // video body ကို အဲဒီ worker က ဆွဲ/ပြန်ပို့စေမယ် → ပင်မ worker မှာ heavy proxy fetch subrequest မကုန်။
+    // download (v.d===1) ကိုတော့ redirect မလုပ်ဘဲ ပင်မ worker ကိုယ်တိုင် လုပ် (filename header မှန်စေရန်)။
+    // proxy worker မှာ D1 share ထားတာမို့ real URL ကို ပို့စရာ မလို — item id + signed params ပဲ ပို့ (real URL မပေါ်)။
+    if (v.d !== 1) {
+      const proxyBase = pickStreamProxy();
+      if (proxyBase) {
+        const proxyUrl = `${proxyBase}/stream/${encodeURIComponent(id)}?${url.searchParams.toString()}`;
+        return new Response(null, {
+          status: 302,
+          headers: { "Location": proxyUrl, "Cache-Control": "no-store" },
+        });
+      }
+      // proxyBase == null (pool ဗလာ) → ဒီအောက်က ပင်မ worker proxy code ကို ဆက်သုံး (fallback)
+    }
+
     const real = resolveRealUrl(item, v.s, v.e, v.d === 1);
     if (!isHttpUrl(real)) return new Response("No source", { status: 404 });
 
@@ -4358,3 +4399,8 @@ export async function onRequest(context) {
     headers: { "content-type": "text/html; charset=utf-8" }, status: 404,
   });
 }
+
+
+
+
+page.dev new ကုဒ်
