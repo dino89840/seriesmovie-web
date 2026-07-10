@@ -3843,17 +3843,6 @@ export async function onRequest(context) {
       return new Response("Link not valid for this session", { status: 403 });
     }
 
-    // ── Stream abuse ကာကွယ် — user တစ်ယောက် ၁ မိနစ်အတွင်း request အလွန်များရင် ကန့်သတ် ──
-    // ⚠️ video byte-range request တိုင်း D1 write လုပ်ရင် D1 write quota (free 100k/day) မြန်မြန်ကုန်လို့ —
-    //    ကျပန်း ၂% (၅၀ ကြိမ်မှ ၁ ကြိမ်) လောက်သာ sampling စစ်တယ်။ abuse ကြီးရင် ဖမ်းမိဆဲ၊
-    //    D1 write ကိုတော့ ~၅၀ ဆ လျှော့ချ။ (edge cache HIT တွေက ဒီအောက်မရောက်ဘဲ ရှေ့မှာ ပြန်ပြီးသား)
-    if (Math.random() < 0.02) {
-      try {
-        const srl = await rateLimitHit(env, `stream:${user.keyId}`, 6, 60);
-        if (srl.blocked) return new Response("Too many requests", { status: 429 });
-      } catch (_) {}
-    }
-
     // ── HOTLINK / EMBED ကာကွယ်ခြင်း ──
     // တခြား website (iframe / img / video embed) က signed link ကို hotlink
     // လုပ်တာ တားဆီးရန် — Referer / Origin ကို ကိုယ့် site domain နဲ့သာ ကိုက်စေမယ်။
