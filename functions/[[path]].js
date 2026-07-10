@@ -1,5 +1,6 @@
 
 
+
 // ── Session / key constants ──
 const SESSION_HOURS    = 24 * 30;
 const COOKIE_NAME      = "__Host-cmflix_sess";
@@ -3704,11 +3705,15 @@ export async function onRequest(context) {
     }
 
     // ── Stream abuse ကာကွယ် — user တစ်ယောက် ၁ မိနစ်အတွင်း request အလွန်များရင် ကန့်သတ် ──
-    // (edge cache HIT တွေက ဒီအောက်မရောက်ဘဲ ရှေ့မှာ ပြန်ပြီးသားမို့ normal playback မထိခိုက်)
-    try {
-      const srl = await rateLimitHit(env, `stream:${user.keyId}`, 240, 60);
-      if (srl.blocked) return new Response("Too many requests", { status: 429 });
-    } catch (_) {}
+    // ⚠️ video byte-range request တိုင်း D1 write လုပ်ရင် D1 write quota (free 100k/day) မြန်မြန်ကုန်လို့ —
+    //    ကျပန်း ၂% (၅၀ ကြိမ်မှ ၁ ကြိမ်) လောက်သာ sampling စစ်တယ်။ abuse ကြီးရင် ဖမ်းမိဆဲ၊
+    //    D1 write ကိုတော့ ~၅၀ ဆ လျှော့ချ။ (edge cache HIT တွေက ဒီအောက်မရောက်ဘဲ ရှေ့မှာ ပြန်ပြီးသား)
+    if (Math.random() < 0.02) {
+      try {
+        const srl = await rateLimitHit(env, `stream:${user.keyId}`, 6, 60);
+        if (srl.blocked) return new Response("Too many requests", { status: 429 });
+      } catch (_) {}
+    }
 
     // ── HOTLINK / EMBED ကာကွယ်ခြင်း ──
     // တခြား website (iframe / img / video embed) က signed link ကို hotlink
@@ -4216,12 +4221,8 @@ export async function onRequest(context) {
 
       // edit လုပ်တဲ့အခါ — မူရင်း published status ကို ဆက်ထိန်းထား (draft က draft အတိုင်း)
       const data = { id, type, title, poster, slide_image, note, actress, created_at: existing.created_at || Date.now(), published: (existing.published == null ? 1 : existing.published) };
-      for (const nm of parseActressNames(actress)) {
-        const slug = actressNameToSlug(nm);
-        if (slug && !(await getActressCache(env, slug))) {
-          try { await lookupActress(env, nm); } catch (_) {}
-        }
-      }
+      // actress ပုံ lookup ကို background (waitUntil) မှာ — response မစောင့်စေဘဲ subrequest limit မဖိ
+      const _actressNamesUpdate = parseActressNames(actress);
       if (type === "series") {
         const r = sanitizeSeasons(form.seasons_json || "");
         if (!r.ok) return new Response(adminEditPage({ ...existing, type, title, poster, slide_image, note }, csrfToken, r.err),
@@ -4238,6 +4239,15 @@ export async function onRequest(context) {
         data.download_url = download_url || video_url;
       }
       await putItem(env, id, data);
+      // actress ပုံ lookup ကို background မှာ (response မစောင့်စေဘဲ) — subrequest limit မဖိ
+      context.waitUntil((async () => {
+        for (const nm of _actressNamesUpdate) {
+          const slug = actressNameToSlug(nm);
+          if (slug && !(await getActressCache(env, slug))) {
+            try { await lookupActress(env, nm); } catch (_) {}
+          }
+        }
+      })());
       return redirectInfo(`"${title}" ပြင်ဆင်ပြီးပါပြီ။`);
     }
 
