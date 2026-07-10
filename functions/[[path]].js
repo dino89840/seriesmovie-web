@@ -3676,7 +3676,7 @@ function resolveRealUrl(item, s, e, download) {
 /* ══════════════════════════════════════════════════
    ROUTER
    ══════════════════════════════════════════════════ */
-export async function onRequest(context) {
+async function routeRequest(context) {
   const { request, env } = context;
   const url = new URL(request.url);
   const path = url.pathname;
@@ -4536,3 +4536,55 @@ export async function onRequest(context) {
     headers: { "content-type": "text/html; charset=utf-8" }, status: 404,
   });
 }
+function hardenResponse(response) {
+  const headers = new Headers(response.headers);
+  const contentType = headers.get("content-type") || "";
+
+  headers.set("X-Content-Type-Options", "nosniff");
+  headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+  headers.set(
+    "Permissions-Policy",
+    "geolocation=(), microphone=(), camera=(), payment=(), usb=()"
+  );
+  headers.set(
+    "Strict-Transport-Security",
+    "max-age=63072000; includeSubDomains; preload"
+  );
+
+  if (contentType.includes("text/html")) {
+    headers.set("X-Frame-Options", "DENY");
+    headers.set("Cross-Origin-Opener-Policy", "same-origin");
+    headers.set("Content-Security-Policy", CSP_POLICY);
+
+    // Personalized page တွေ shared cache ထဲ မရောက်အောင်
+    if (!headers.has("Cache-Control")) {
+      headers.set("Cache-Control", "private, no-store");
+    }
+  }
+
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+export async function onRequest(context) {
+  try {
+    const response = await routeRequest(context);
+    return hardenResponse(response);
+  } catch (error) {
+    console.error("Unhandled route error", error);
+
+    return hardenResponse(
+      new Response("Internal Server Error", {
+        status: 500,
+        headers: {
+          "content-type": "text/plain; charset=utf-8",
+          "cache-control": "no-store",
+        },
+      })
+    );
+  }
+}
+
