@@ -1,7 +1,3 @@
-
-
-
-
 // ── Session / key constants ──
 const SESSION_HOURS    = 24 * 30;
 const COOKIE_NAME      = "__Host-cmflix_sess";
@@ -503,12 +499,32 @@ async function setSetting(env, key, value) {
   ).bind(key, String(value), Date.now()).run();
 }
 
-// maintenance ဖွင့်/ပိတ် စစ် (DB ထဲက "1" ဆို ဖွင့်ထား)
+let _maintenanceCache = {
+  value: false,
+  expiresAt: 0,
+};
+
 async function isMaintenanceOn(env) {
+  const now = Date.now();
+
+  if (now < _maintenanceCache.expiresAt) {
+    return _maintenanceCache.value;
+  }
+
   try {
-    return (await getSetting(env, "maintenance")) === "1";
-  } catch (_) { return false; }
+    const value = (await getSetting(env, "maintenance")) === "1";
+
+    _maintenanceCache = {
+      value,
+      expiresAt: now + 5000, // ၅ စက္ကန့်
+    };
+
+    return value;
+  } catch (_) {
+    return _maintenanceCache.value;
+  }
 }
+
 
 /* ══════════════════════════════════════════════════
    CRYPTO HELPERS
