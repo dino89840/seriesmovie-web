@@ -4260,7 +4260,9 @@ const itemId = String(form.id || "").trim();
   // ───────────── LOGOUT ─────────────
   if (path === "/logout") {
     const cur = await getCurrentUser(request, env);
-    if (cur && !cur.isAdmin && cur.sid) await revokeSession(env, cur.keyId, cur.sid);
+    if (cur && cur.sid) {
+  await revokeSession(env, cur.keyId, cur.sid);
+}
     return new Response(null, { status: 302, headers: { "Location": "/login", "Set-Cookie": setCookieHeader(COOKIE_NAME, "", { maxAge: 0 }) } });
   }
 
