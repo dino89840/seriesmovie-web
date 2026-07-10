@@ -1,6 +1,3 @@
-
-
-
 // ── Session / key constants ──
 const SESSION_HOURS    = 24 * 30;
 const COOKIE_NAME      = "__Host-cmflix_sess";
@@ -498,15 +495,44 @@ async function getSetting(env, key) {
 async function setSetting(env, key, value) {
   await db(env).prepare(
     `INSERT INTO app_settings (skey, value, updated_at) VALUES (?,?,?)
-     ON CONFLICT(skey) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`
+     ON CONFLICT(skey) DO UPDATE SET
+       value=excluded.value,
+       updated_at=excluded.updated_at`
   ).bind(key, String(value), Date.now()).run();
+
+  if (key === "maintenance") {
+    _maintenanceCache = {
+      value: String(value) === "1",
+      expiresAt: Date.now() + 5000,
+    };
+  }
 }
 
 // maintenance ဖွင့်/ပိတ် စစ် (DB ထဲက "1" ဆို ဖွင့်ထား)
+let _maintenanceCache = {
+  value: false,
+  expiresAt: 0,
+};
+
 async function isMaintenanceOn(env) {
+  const now = Date.now();
+
+  if (now < _maintenanceCache.expiresAt) {
+    return _maintenanceCache.value;
+  }
+
   try {
-    return (await getSetting(env, "maintenance")) === "1";
-  } catch (_) { return false; }
+    const value = (await getSetting(env, "maintenance")) === "1";
+
+    _maintenanceCache = {
+      value,
+      expiresAt: now + 5000, // ၅ စက္ကန့်
+    };
+
+    return value;
+  } catch (_) {
+    return _maintenanceCache.value;
+  }
 }
 
 /* ══════════════════════════════════════════════════
@@ -678,18 +704,41 @@ function streamSignBase(itemId, s, e, d, exp, u) {
   return `${itemId}|${s}|${e}|${d}|${exp}|${u}`;
 }
 
-async function makeStreamUrl(env, itemId, { s = -1, e = -1, download = false, u = "" } = {}) {
+async function makeStreamUrl(
+  env,
+  itemId,
+  { s = -1, e = -1, download = false, u = "" } = {}
+) {
   const exp = Date.now() + STREAM_TTL_SEC * 1000;
   const d = download ? 1 : 0;
-  const sig = await hmacSign(streamSecret(env), streamSignBase(itemId, s, e, d, exp, u));
+
+  const sig = await hmacSign(
+    streamSecret(env),
+    streamSignBase(itemId, s, e, d, exp, u)
+  );
+
   const qs = new URLSearchParams();
   qs.set("s", String(s));
   qs.set("e", String(e));
   qs.set("d", String(d));
   qs.set("exp", String(exp));
+
   if (u) qs.set("u", u);
+
   qs.set("sig", sig);
-  return `/stream/${encodeURIComponent(itemId)}?${qs.toString()}`;
+
+  const relativeUrl =
+    `/stream/${encodeURIComponent(itemId)}?${qs.toString()}`;
+
+  // Item/season/episode/download အလိုက် proxy တစ်ခုကို တည်ငြိမ်စွာရွေး
+  const proxyKey = `${itemId}|${s}|${e}|${d}`;
+  const proxyBase = pickStreamProxy(proxyKey);
+
+  // Proxy ရှိရင် browser ကို proxy ဆီ direct ပို့
+  // Pool မရှိရင် page1 /stream ကို fallback သုံး
+  return proxyBase
+    ? `${proxyBase}${relativeUrl}`
+    : relativeUrl;
 }
 
 async function verifyStreamSig(env, itemId, params) {
@@ -1291,15 +1340,36 @@ function premiumLabel(user) {
 /* Rate limit (D1: table `rate_limits`) */
 async function rateLimitHit(env, key, max, windowSec) {
   const now = Math.floor(Date.now() / 1000);
-  const row = await db(env).prepare("SELECT count, reset_at FROM rate_limits WHERE rl_key=?").bind(key).first();
-  let count = 0, reset = now + windowSec;
-  if (row && row.reset_at > now) { count = row.count; reset = row.reset_at; }
-  count += 1;
-  await db(env).prepare(
-    `INSERT INTO rate_limits (rl_key, count, reset_at) VALUES (?,?,?)
-     ON CONFLICT(rl_key) DO UPDATE SET count=excluded.count, reset_at=excluded.reset_at`
-  ).bind(key, count, reset).run();
-  return { blocked: count > max, count, reset };
+  const newReset = now + windowSec;
+
+  const row = await db(env).prepare(
+    `INSERT INTO rate_limits (rl_key, count, reset_at)
+     VALUES (?, 1, ?)
+     ON CONFLICT(rl_key) DO UPDATE SET
+       count = CASE
+         WHEN rate_limits.reset_at <= ? THEN 1
+         ELSE rate_limits.count + 1
+       END,
+       reset_at = CASE
+         WHEN rate_limits.reset_at <= ? THEN excluded.reset_at
+         ELSE rate_limits.reset_at
+       END
+     RETURNING count, reset_at`
+  ).bind(
+    key,
+    newReset,
+    now,
+    now
+  ).first();
+
+  const count = Number(row?.count || 1);
+  const reset = Number(row?.reset_at || newReset);
+
+  return {
+    blocked: count > max,
+    count,
+    reset,
+  };
 }
 /* ══════════════════════════════════════════════════
    PREMIUM SVG ICONS HELPER
@@ -1417,10 +1487,23 @@ const STREAM_PROXY_POOL = [
   "https://wwwk.cmflix.kdns.fr",
 ];
 
-function pickStreamProxy() {
-  if (!Array.isArray(STREAM_PROXY_POOL) || STREAM_PROXY_POOL.length === 0) return null;
-  const i = Math.floor(Math.random() * STREAM_PROXY_POOL.length);
-  return String(STREAM_PROXY_POOL[i] || "").replace(/\/+$/, "");
+// Random မရွေးတော့ဘဲ item/episode တူရင် proxy တူတူရစေမယ်။
+// ဒါမှ Range/seek request တွေ proxy မပြောင်းဘဲ cache hit ပိုကောင်းမယ်။
+function pickStreamProxy(key = "") {
+  if (!Array.isArray(STREAM_PROXY_POOL) || STREAM_PROXY_POOL.length === 0) {
+    return null;
+  }
+
+  const text = String(key || "");
+  let hash = 2166136261;
+
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+
+  const index = (hash >>> 0) % STREAM_PROXY_POOL.length;
+  return String(STREAM_PROXY_POOL[index] || "").replace(/\/+$/, "");
 }
 
 /* ══════════════════════════════════════════════════
@@ -1653,28 +1736,61 @@ function isGuestRequest(request) {
 }
 
 async function cachedHtml(context, request, ttlSec, builder) {
-  // login ဝင်ထားရင် cache မသုံး (personalize ဖြစ်နေလို့)
+  if (request.method !== "GET") {
+    return htmlResponse(
+      await builder(),
+      { "Cache-Control": "private, no-store" }
+    );
+  }
+
+  // Login ပါတဲ့ personalized HTML ကို shared cache မလုပ်
   if (!isGuestRequest(request)) {
-    return new Response(await builder(), { headers: { "content-type": "text/html; charset=utf-8" } });
+    return htmlResponse(
+      await builder(),
+      { "Cache-Control": "private, no-store" }
+    );
   }
+
   const cache = caches.default;
-  const cacheKey = new Request(new URL(request.url).toString(), { method: "GET" });
-  const hit = await cache.match(cacheKey);
-  if (hit) {
-    const h = new Headers(hit.headers);
-    h.set("X-CMFlix-Page-Cache", "HIT");
-    return new Response(hit.body, { status: hit.status, headers: h });
-  }
-  const html = await builder();
-  const resp = new Response(html, {
-    headers: {
-      "content-type": "text/html; charset=utf-8",
-      "Cache-Control": `public, max-age=0, s-maxage=${ttlSec}`,
-      "X-CMFlix-Page-Cache": "MISS",
-    },
+
+  const keyUrl = new URL(request.url);
+  keyUrl.hash = "";
+
+  // Tracking parameter တွေက cache entry မပေါက်ကွဲအောင် ဖယ်
+  keyUrl.searchParams.delete("utm_source");
+  keyUrl.searchParams.delete("utm_medium");
+  keyUrl.searchParams.delete("utm_campaign");
+  keyUrl.searchParams.delete("fbclid");
+
+  const cacheKey = new Request(keyUrl.toString(), {
+    method: "GET",
   });
-  context.waitUntil(cache.put(cacheKey, resp.clone()));
-  return resp;
+
+  const hit = await cache.match(cacheKey);
+
+  if (hit) {
+    const headers = new Headers(hit.headers);
+    headers.set("X-CMFlix-Page-Cache", "HIT");
+
+    return new Response(hit.body, {
+      status: hit.status,
+      headers,
+    });
+  }
+
+  const html = await builder();
+
+  const response = htmlResponse(html, {
+    "Cache-Control":
+      `public, max-age=0, s-maxage=${ttlSec}, stale-while-revalidate=60`,
+    "X-CMFlix-Page-Cache": "MISS",
+  });
+
+  context.waitUntil(
+    cache.put(cacheKey, response.clone()).catch(() => {})
+  );
+
+  return response;
 }
 
 
@@ -2125,7 +2241,15 @@ ${footer()}`;
 /* ══════════════════════════════════════════════════
    WATCH PAGE  — Plyr player, signed stream URLs only
    ══════════════════════════════════════════════════ */
-function watchPage(item, user, gated, streams, bookmarked = false, actresses = []) {
+function watchPage(
+  item,
+  user,
+  gated,
+  streams,
+  bookmarked = false,
+  actresses = [],
+  csrfToken = ""
+) {
   const cat = CATEGORIES[item.type] || CATEGORIES.movie;
   const loggedIn = !!user;
 
@@ -2669,7 +2793,10 @@ ${footer()}`;
       fetch('/bookmark/toggle',{
         method:'POST',
         headers:{'content-type':'application/x-www-form-urlencoded'},
-        body:'id='+encodeURIComponent(id)+'&action='+(on?'remove':'add')
+        body:
+  'id='+encodeURIComponent(id)+
+  '&action='+(on?'remove':'add')+
+  '&csrf_token='+encodeURIComponent(${JSON.stringify(csrfToken)})
       }).then(function(r){return r.json();}).then(function(d){
         if(d && d.ok){
           var nowOn=d.bookmarked;
@@ -3537,7 +3664,7 @@ function resolveRealUrl(item, s, e, download) {
 /* ══════════════════════════════════════════════════
    ROUTER
    ══════════════════════════════════════════════════ */
-export async function onRequest(context) {
+async function routeRequest(context) {
   const { request, env } = context;
   const url = new URL(request.url);
   const path = url.pathname;
@@ -3678,9 +3805,36 @@ export async function onRequest(context) {
       const c = await getActressCache(env, slug);
       actresses.push({ slug, name: nm, image: c ? c.image : "" });
     }
-    return new Response(watchPage(item, user, gated, streams, bookmarked, actresses),
-      { headers: { "content-type": "text/html; charset=utf-8" } }
-    );
+    const {
+  token: watchCsrfToken,
+  isNew: watchCsrfNew
+} = await getOrCreateCsrf(request, env);
+
+const watchHeaders = {
+  "content-type": "text/html; charset=utf-8",
+  "cache-control": "private, no-store",
+};
+
+if (watchCsrfNew) {
+  watchHeaders["Set-Cookie"] = csrfCookieHeader(watchCsrfToken);
+}
+
+return new Response(
+  watchPage(
+    item,
+    user,
+    gated,
+    streams,
+    bookmarked,
+    actresses,
+    watchCsrfToken
+  ),
+  { headers: watchHeaders }
+);
+
+  { headers: { "content-type": "text/html; charset=utf-8" } }
+);
+
   }
 
   // ───────────── STREAM (signed) — Worker PROXY + EDGE CACHE ─────────────
@@ -3704,16 +3858,7 @@ export async function onRequest(context) {
       return new Response("Link not valid for this session", { status: 403 });
     }
 
-    // ── Stream abuse ကာကွယ် — user တစ်ယောက် ၁ မိနစ်အတွင်း request အလွန်များရင် ကန့်သတ် ──
-    // ⚠️ video byte-range request တိုင်း D1 write လုပ်ရင် D1 write quota (free 100k/day) မြန်မြန်ကုန်လို့ —
-    //    ကျပန်း ၂% (၅၀ ကြိမ်မှ ၁ ကြိမ်) လောက်သာ sampling စစ်တယ်။ abuse ကြီးရင် ဖမ်းမိဆဲ၊
-    //    D1 write ကိုတော့ ~၅၀ ဆ လျှော့ချ။ (edge cache HIT တွေက ဒီအောက်မရောက်ဘဲ ရှေ့မှာ ပြန်ပြီးသား)
-    if (Math.random() < 0.02) {
-      try {
-        const srl = await rateLimitHit(env, `stream:${user.keyId}`, 6, 60);
-        if (srl.blocked) return new Response("Too many requests", { status: 429 });
-      } catch (_) {}
-    }
+   
 
     // ── HOTLINK / EMBED ကာကွယ်ခြင်း ──
     // တခြား website (iframe / img / video embed) က signed link ကို hotlink
@@ -3740,7 +3885,9 @@ export async function onRequest(context) {
     // download (v.d===1) ကိုတော့ redirect မလုပ်ဘဲ ပင်မ worker ကိုယ်တိုင် လုပ် (filename header မှန်စေရန်)။
     // proxy worker မှာ D1 share ထားတာမို့ real URL ကို ပို့စရာ မလို — item id + signed params ပဲ ပို့ (real URL မပေါ်)။
     if (v.d !== 1) {
-      const proxyBase = pickStreamProxy();
+      const proxyBase = pickStreamProxy(
+  `${id}|${v.s}|${v.e}|${v.d}`
+);
       if (proxyBase) {
         const proxyUrl = `${proxyBase}/stream/${encodeURIComponent(id)}?${url.searchParams.toString()}`;
         return new Response(null, {
@@ -3880,8 +4027,26 @@ export async function onRequest(context) {
         status: 403, headers: { "content-type": "application/json; charset=utf-8" },
       });
     }
-    const form = await parseForm(request);
-    const itemId = String(form.id || "").trim();
+   const form = await parseForm(request);
+
+if (!(await verifyCsrf(request, form))) {
+  return new Response(
+    JSON.stringify({
+      ok: false,
+      error: "csrf failed",
+    }),
+    {
+      status: 403,
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        "cache-control": "no-store",
+      },
+    }
+  );
+}
+
+const itemId = String(form.id || "").trim();
+
     const action = String(form.action || "").trim();
     if (!itemId) {
       return new Response(JSON.stringify({ ok: false, error: "no id" }), {
@@ -4045,7 +4210,9 @@ export async function onRequest(context) {
   // ───────────── LOGOUT ─────────────
   if (path === "/logout") {
     const cur = await getCurrentUser(request, env);
-    if (cur && !cur.isAdmin && cur.sid) await revokeSession(env, cur.keyId, cur.sid);
+    if (cur && cur.sid) {
+  await revokeSession(env, cur.keyId, cur.sid);
+}
     return new Response(null, { status: 302, headers: { "Location": "/login", "Set-Cookie": setCookieHeader(COOKIE_NAME, "", { maxAge: 0 }) } });
   }
 
@@ -4406,5 +4573,3 @@ export async function onRequest(context) {
     headers: { "content-type": "text/html; charset=utf-8" }, status: 404,
   });
 }
-
-
