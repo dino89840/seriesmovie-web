@@ -2849,7 +2849,10 @@ ${footer()}`;
       fetch('/bookmark/toggle',{
         method:'POST',
         headers:{'content-type':'application/x-www-form-urlencoded'},
-        body:'id='+encodeURIComponent(id)+'&action='+(on?'remove':'add')
+        body:
+  'id='+encodeURIComponent(id)+
+  '&action='+(on?'remove':'add')+
+  '&csrf_token='+encodeURIComponent(${JSON.stringify(csrfToken)})
       }).then(function(r){return r.json();}).then(function(d){
         if(d && d.ok){
           var nowOn=d.bookmarked;
@@ -3858,9 +3861,33 @@ async function routeRequest(context) {
       const c = await getActressCache(env, slug);
       actresses.push({ slug, name: nm, image: c ? c.image : "" });
     }
-    return new Response(watchPage(item, user, gated, streams, bookmarked, actresses),
-      { headers: { "content-type": "text/html; charset=utf-8" } }
-    );
+    const {
+  token: watchCsrfToken,
+  isNew: watchCsrfNew
+} = await getOrCreateCsrf(request, env);
+
+const watchHeaders = {
+  "content-type": "text/html; charset=utf-8",
+  "cache-control": "private, no-store",
+};
+
+if (watchCsrfNew) {
+  watchHeaders["Set-Cookie"] = csrfCookieHeader(watchCsrfToken);
+}
+
+return new Response(
+  watchPage(
+    item,
+    user,
+    gated,
+    streams,
+    bookmarked,
+    actresses,
+    watchCsrfToken
+  ),
+  { headers: watchHeaders }
+);
+
   }
 
   // ───────────── STREAM (signed) — Worker PROXY + EDGE CACHE ─────────────
