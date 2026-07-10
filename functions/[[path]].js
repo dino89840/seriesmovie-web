@@ -4100,153 +4100,178 @@ return new Response(
   }
 
 
-  // ───────────── BOOKMARK TOGGLE ─────────────
+    // ───────────── BOOKMARK TOGGLE ─────────────
   if (path === "/bookmark/toggle" && method === "POST") {
     const user = await getCurrentUser(request, env);
+
     if (!user || user.isAdmin || isExpired(user)) {
-      return new Response(JSON.stringify({ ok: false, error: "login required" }), {
-        status: 403, headers: { "content-type": "application/json; charset=utf-8" },
-      });
+      return new Response(
+        JSON.stringify({
+          ok: false,
+          error: "login required",
+        }),
+        {
+          status: 403,
+          headers: {
+            "content-type": "application/json; charset=utf-8",
+            "cache-control": "no-store",
+          },
+        }
+      );
     }
+
     const form = await parseForm(request);
 
-if (!(await verifyCsrf(request, form))) {
-  return new Response(
-    JSON.stringify({
-      ok: false,
-      error: "csrf failed",
-    }),
-    {
-      status: 403,
-      headers: {
-        "content-type": "application/json; charset=utf-8",
-        "cache-control": "no-store",
-      },
+    if (!(await verifyCsrf(request, form))) {
+      return new Response(
+        JSON.stringify({
+          ok: false,
+          error: "csrf failed",
+        }),
+        {
+          status: 403,
+          headers: {
+            "content-type": "application/json; charset=utf-8",
+            "cache-control": "no-store",
+          },
+        }
+      );
     }
-  );
-}
 
-const itemId =
-  String(form.id || "")
-    .trim();
+    const itemId = String(form.id || "").trim();
+    const action = String(form.action || "add")
+      .trim()
+      .toLowerCase();
 
-const action =
-  String(form.action || "add")
-    .trim()
-    .toLowerCase();
-
-if (!itemId) {
-  return new Response(
-    JSON.stringify({
-      ok: false,
-      error: "no id",
-    }),
-    {
-      status: 400,
-      headers: {
-        "content-type":
-          "application/json; charset=utf-8",
-        "cache-control": "no-store",
-      },
+    if (!itemId) {
+      return new Response(
+        JSON.stringify({
+          ok: false,
+          error: "no id",
+        }),
+        {
+          status: 400,
+          headers: {
+            "content-type": "application/json; charset=utf-8",
+            "cache-control": "no-store",
+          },
+        }
+      );
     }
-  );
-}
 
-if (
-  action !== "add" &&
-  action !== "remove"
-) {
-  return new Response(
-    JSON.stringify({
-      ok: false,
-      error: "invalid action",
-    }),
-    {
-      status: 400,
-      headers: {
-        "content-type":
-          "application/json; charset=utf-8",
-        "cache-control": "no-store",
-      },
+    if (action !== "add" && action !== "remove") {
+      return new Response(
+        JSON.stringify({
+          ok: false,
+          error: "invalid action",
+        }),
+        {
+          status: 400,
+          headers: {
+            "content-type": "application/json; charset=utf-8",
+            "cache-control": "no-store",
+          },
+        }
+      );
     }
-  );
-}
 
-const item = await getItem(env, itemId);
+    const item = await getItem(env, itemId);
 
-if (!item) {
-  return new Response(
-    JSON.stringify({
-      ok: false,
-      error: "not found",
-    }),
-    {
-      status: 404,
-      headers: {
-        "content-type":
-          "application/json; charset=utf-8",
-        "cache-control": "no-store",
-      },
+    if (!item) {
+      return new Response(
+        JSON.stringify({
+          ok: false,
+          error: "not found",
+        }),
+        {
+          status: 404,
+          headers: {
+            "content-type": "application/json; charset=utf-8",
+            "cache-control": "no-store",
+          },
+        }
+      );
     }
-  );
-}
 
-if (action === "remove") {
-  await removeBookmark(
-    env,
-    user.keyId,
-    itemId
-  );
-} else {
-  await addBookmark(
-    env,
-    user.keyId,
-    itemId
-  );
-}
+    if (action === "remove") {
+      await removeBookmark(env, user.keyId, itemId);
+    } else {
+      await addBookmark(env, user.keyId, itemId);
+    }
 
-const nowOn = await isBookmarked(
-  env,
-  user.keyId,
-  itemId
-);
+    const nowOn = await isBookmarked(
+      env,
+      user.keyId,
+      itemId
+    );
 
-return new Response(
-  JSON.stringify({
-    ok: true,
-    bookmarked: nowOn,
-  }),
-  {
-    headers: {
-      "content-type":
-        "application/json; charset=utf-8",
-      "cache-control": "no-store",
-    },
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        bookmarked: nowOn,
+      }),
+      {
+        headers: {
+          "content-type": "application/json; charset=utf-8",
+          "cache-control": "no-store",
+        },
+      }
+    );
   }
-);
-
 
   // ───────────── BOOKMARK CLEAR ALL ─────────────
   if (path === "/bookmark/clear" && method === "POST") {
     const user = await getCurrentUser(request, env);
+
     if (!user || user.isAdmin || isExpired(user)) {
-      return new Response(JSON.stringify({ ok: false, error: "login required" }), {
-        status: 403, headers: { "content-type": "application/json; charset=utf-8" },
-      });
+      return new Response(
+        JSON.stringify({
+          ok: false,
+          error: "login required",
+        }),
+        {
+          status: 403,
+          headers: {
+            "content-type": "application/json; charset=utf-8",
+            "cache-control": "no-store",
+          },
+        }
+      );
     }
+
     const form = await parseForm(request);
+
     if (!(await verifyCsrf(request, form))) {
-      return new Response(JSON.stringify({ ok: false, error: "csrf failed" }), {
-        status: 403, headers: { "content-type": "application/json; charset=utf-8" },
-      });
+      return new Response(
+        JSON.stringify({
+          ok: false,
+          error: "csrf failed",
+        }),
+        {
+          status: 403,
+          headers: {
+            "content-type": "application/json; charset=utf-8",
+            "cache-control": "no-store",
+          },
+        }
+      );
     }
+
     await clearAllBookmarks(env, user.keyId);
-    return new Response(JSON.stringify({ ok: true }), {
-      headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store",
-    },
-    }
+
+    return new Response(
+      JSON.stringify({
+        ok: true,
+      }),
+      {
+        headers: {
+          "content-type": "application/json; charset=utf-8",
+          "cache-control": "no-store",
+        },
+      }
     );
   }
+
 
   // ───────────── MY LIST (bookmarks) ─────────────
   if (path === "/mylist" && method === "GET") {
