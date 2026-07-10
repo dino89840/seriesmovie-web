@@ -1,7 +1,4 @@
 
-
-
-
 // ── Session / key constants ──
 const SESSION_HOURS    = 24 * 30;
 const COOKIE_NAME      = "__Host-cmflix_sess";
@@ -750,37 +747,70 @@ async function makeStreamUrl(
   itemId,
   { s = -1, e = -1, download = false, u = "" } = {}
 ) {
-  const exp = Date.now() + STREAM_TTL_SEC * 1000;
+  const exp =
+    Date.now() + STREAM_TTL_SEC * 1000;
+
   const d = download ? 1 : 0;
 
   const sig = await hmacSign(
     streamSecret(env),
-    streamSignBase(itemId, s, e, d, exp, u)
+    streamSignBase(
+      itemId,
+      s,
+      e,
+      d,
+      exp,
+      u
+    )
   );
 
   const qs = new URLSearchParams();
+
   qs.set("s", String(s));
   qs.set("e", String(e));
   qs.set("d", String(d));
   qs.set("exp", String(exp));
 
-  if (u) qs.set("u", u);
+  if (u) {
+    qs.set("u", u);
+  }
 
   qs.set("sig", sig);
 
   const relativeUrl =
-    `/stream/${encodeURIComponent(itemId)}?${qs.toString()}`;
+    `/stream/${encodeURIComponent(itemId)}` +
+    `?${qs.toString()}`;
 
-  // Item/season/episode/download အလိုက် proxy တစ်ခုကို တည်ငြိမ်စွာရွေး
-  const proxyKey = `${itemId}|${s}|${e}|${d}`;
-  const proxyBase = pickStreamProxy(proxyKey);
+  /*
+   * Download ကို Main worker က ကိုယ်တိုင် handle လုပ်မယ်။
+   *
+   * ဒါမှ:
+   * - filename header မှန်မယ်
+   * - Page 2/3 MEDIA_ALLOWED_HOSTS မှားရင်လည်း
+   *   download က ဆက်လုပ်နိုင်မယ်
+   * - Main route ထဲက Content-Disposition logic
+   *   တကယ်အလုပ်လုပ်မယ်
+   */
+  if (d === 1) {
+    return relativeUrl;
+  }
 
-  // Proxy ရှိရင် browser ကို proxy ဆီ direct ပို့
-  // Pool မရှိရင် page1 /stream ကို fallback သုံး
+  /*
+   * Playback stream သာ Page 2/3 proxy pool ဆီပို့မယ်။
+   * Item/season/episode တူရင် proxy တူတူရစေရန်
+   * stable hash သုံးထားတယ်။
+   */
+  const proxyKey =
+    `${itemId}|${s}|${e}|${d}`;
+
+  const proxyBase =
+    pickStreamProxy(proxyKey);
+
   return proxyBase
     ? `${proxyBase}${relativeUrl}`
     : relativeUrl;
 }
+
 
 async function verifyStreamSig(env, itemId, params) {
   const s = parseInt(params.get("s") ?? "-1", 10);
@@ -4096,29 +4126,105 @@ if (!(await verifyCsrf(request, form))) {
   );
 }
 
-const itemId = String(form.id || "").trim();
+const itemId =
+  String(form.id || "")
+    .trim();
 
-    if (!itemId) {
-      return new Response(JSON.stringify({ ok: false, error: "no id" }), {
-        status: 400, headers: { "content-type": "application/json; charset=utf-8" },
-      });
+const action =
+  String(form.action || "add")
+    .trim()
+    .toLowerCase();
+
+if (!itemId) {
+  return new Response(
+    JSON.stringify({
+      ok: false,
+      error: "no id",
+    }),
+    {
+      status: 400,
+      headers: {
+        "content-type":
+          "application/json; charset=utf-8",
+        "cache-control": "no-store",
+      },
     }
-    const item = await getItem(env, itemId);
-    if (!item) {
-      return new Response(JSON.stringify({ ok: false, error: "not found" }), {
-        status: 404, headers: { "content-type": "application/json; charset=utf-8" },
-      });
+  );
+}
+
+if (
+  action !== "add" &&
+  action !== "remove"
+) {
+  return new Response(
+    JSON.stringify({
+      ok: false,
+      error: "invalid action",
+    }),
+    {
+      status: 400,
+      headers: {
+        "content-type":
+          "application/json; charset=utf-8",
+        "cache-control": "no-store",
+      },
     }
-    if (action === "remove") {
-      await removeBookmark(env, user.keyId, itemId);
-    } else {
-      await addBookmark(env, user.keyId, itemId);
+  );
+}
+
+const item = await getItem(env, itemId);
+
+if (!item) {
+  return new Response(
+    JSON.stringify({
+      ok: false,
+      error: "not found",
+    }),
+    {
+      status: 404,
+      headers: {
+        "content-type":
+          "application/json; charset=utf-8",
+        "cache-control": "no-store",
+      },
     }
-    const nowOn = await isBookmarked(env, user.keyId, itemId);
-    return new Response(JSON.stringify({ ok: true, bookmarked: nowOn }), {
-      headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" },
-    });
+  );
+}
+
+if (action === "remove") {
+  await removeBookmark(
+    env,
+    user.keyId,
+    itemId
+  );
+} else {
+  await addBookmark(
+    env,
+    user.keyId,
+    itemId
+  );
+}
+
+const nowOn = await isBookmarked(
+  env,
+  user.keyId,
+  itemId
+);
+
+return new Response(
+  JSON.stringify({
+    ok: true,
+    bookmarked: nowOn,
+  }),
+  {
+    headers: {
+      "content-type":
+        "application/json; charset=utf-8",
+      "cache-control": "no-store",
+    },
   }
+);
+
 
   // ───────────── BOOKMARK CLEAR ALL ─────────────
   if (path === "/bookmark/clear" && method === "POST") {
@@ -4674,4 +4780,3 @@ export async function onRequest(context) {
     );
   }
 }
-
