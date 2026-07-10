@@ -1,3 +1,7 @@
+
+
+
+
 // ── Session / key constants ──
 const SESSION_HOURS    = 24 * 30;
 const COOKIE_NAME      = "__Host-cmflix_sess";
@@ -495,44 +499,15 @@ async function getSetting(env, key) {
 async function setSetting(env, key, value) {
   await db(env).prepare(
     `INSERT INTO app_settings (skey, value, updated_at) VALUES (?,?,?)
-     ON CONFLICT(skey) DO UPDATE SET
-       value=excluded.value,
-       updated_at=excluded.updated_at`
+     ON CONFLICT(skey) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`
   ).bind(key, String(value), Date.now()).run();
-
-  if (key === "maintenance") {
-    _maintenanceCache = {
-      value: String(value) === "1",
-      expiresAt: Date.now() + 5000,
-    };
-  }
 }
 
 // maintenance ဖွင့်/ပိတ် စစ် (DB ထဲက "1" ဆို ဖွင့်ထား)
-let _maintenanceCache = {
-  value: false,
-  expiresAt: 0,
-};
-
 async function isMaintenanceOn(env) {
-  const now = Date.now();
-
-  if (now < _maintenanceCache.expiresAt) {
-    return _maintenanceCache.value;
-  }
-
   try {
-    const value = (await getSetting(env, "maintenance")) === "1";
-
-    _maintenanceCache = {
-      value,
-      expiresAt: now + 5000, // ၅ စက္ကန့်
-    };
-
-    return value;
-  } catch (_) {
-    return _maintenanceCache.value;
-  }
+    return (await getSetting(env, "maintenance")) === "1";
+  } catch (_) { return false; }
 }
 
 /* ══════════════════════════════════════════════════
@@ -547,16 +522,53 @@ async function sha256Hex(str) {
   return hex;
 }
 
-async function hmacSign(secret, data) {
+const _hmacKeyCache = new Map();
+
+async function getHmacCryptoKey(secret) {
+  const cacheKey = String(secret || "");
+
+  if (_hmacKeyCache.has(cacheKey)) {
+    return _hmacKeyCache.get(cacheKey);
+  }
+
   const key = await crypto.subtle.importKey(
-    "raw", new TextEncoder().encode(secret),
-    { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
+    "raw",
+    new TextEncoder().encode(cacheKey),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
   );
-  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(data));
+
+  // secret ပြောင်းလဲမှု အများကြီးကြောင့် memory မတက်အောင်
+  if (_hmacKeyCache.size >= 8) {
+    const first = _hmacKeyCache.keys().next().value;
+    _hmacKeyCache.delete(first);
+  }
+
+  _hmacKeyCache.set(cacheKey, key);
+  return key;
+}
+
+async function hmacSign(secret, data) {
+  const key = await getHmacCryptoKey(secret);
+
+  const sig = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    new TextEncoder().encode(data)
+  );
+
   const bytes = new Uint8Array(sig);
   let bin = "";
-  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+
+  for (let i = 0; i < bytes.length; i++) {
+    bin += String.fromCharCode(bytes[i]);
+  }
+
+  return btoa(bin)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
 }
 
 function safeEqual(a, b) {
@@ -1340,36 +1352,15 @@ function premiumLabel(user) {
 /* Rate limit (D1: table `rate_limits`) */
 async function rateLimitHit(env, key, max, windowSec) {
   const now = Math.floor(Date.now() / 1000);
-  const newReset = now + windowSec;
-
-  const row = await db(env).prepare(
-    `INSERT INTO rate_limits (rl_key, count, reset_at)
-     VALUES (?, 1, ?)
-     ON CONFLICT(rl_key) DO UPDATE SET
-       count = CASE
-         WHEN rate_limits.reset_at <= ? THEN 1
-         ELSE rate_limits.count + 1
-       END,
-       reset_at = CASE
-         WHEN rate_limits.reset_at <= ? THEN excluded.reset_at
-         ELSE rate_limits.reset_at
-       END
-     RETURNING count, reset_at`
-  ).bind(
-    key,
-    newReset,
-    now,
-    now
-  ).first();
-
-  const count = Number(row?.count || 1);
-  const reset = Number(row?.reset_at || newReset);
-
-  return {
-    blocked: count > max,
-    count,
-    reset,
-  };
+  const row = await db(env).prepare("SELECT count, reset_at FROM rate_limits WHERE rl_key=?").bind(key).first();
+  let count = 0, reset = now + windowSec;
+  if (row && row.reset_at > now) { count = row.count; reset = row.reset_at; }
+  count += 1;
+  await db(env).prepare(
+    `INSERT INTO rate_limits (rl_key, count, reset_at) VALUES (?,?,?)
+     ON CONFLICT(rl_key) DO UPDATE SET count=excluded.count, reset_at=excluded.reset_at`
+  ).bind(key, count, reset).run();
+  return { blocked: count > max, count, reset };
 }
 /* ══════════════════════════════════════════════════
    PREMIUM SVG ICONS HELPER
@@ -1468,8 +1459,23 @@ async function parseForm(request) {
   return {};
 }
 
-function isHttpUrl(u) {
-  return /^https?:\/\//i.test(String(u || "").trim());
+function isHttpUrl(raw) {
+  try {
+    const u = new URL(String(raw || "").trim());
+
+    if (u.protocol !== "https:" && u.protocol !== "http:") {
+      return false;
+    }
+
+    if (!u.hostname) return false;
+
+    // URL ထဲ username/password ထည့်တာ ပိတ်
+    if (u.username || u.password) return false;
+
+    return true;
+  } catch (_) {
+    return false;
+  }
 }
 /* ══════════════════════════════════════════════════
    DOMAIN REWRITE  — link domain အဟောင်း→အသစ် အလိုအလျောက်ပြောင်း
@@ -1736,61 +1742,28 @@ function isGuestRequest(request) {
 }
 
 async function cachedHtml(context, request, ttlSec, builder) {
-  if (request.method !== "GET") {
-    return htmlResponse(
-      await builder(),
-      { "Cache-Control": "private, no-store" }
-    );
-  }
-
-  // Login ပါတဲ့ personalized HTML ကို shared cache မလုပ်
+  // login ဝင်ထားရင် cache မသုံး (personalize ဖြစ်နေလို့)
   if (!isGuestRequest(request)) {
-    return htmlResponse(
-      await builder(),
-      { "Cache-Control": "private, no-store" }
-    );
+    return new Response(await builder(), { headers: { "content-type": "text/html; charset=utf-8" } });
   }
-
   const cache = caches.default;
-
-  const keyUrl = new URL(request.url);
-  keyUrl.hash = "";
-
-  // Tracking parameter တွေက cache entry မပေါက်ကွဲအောင် ဖယ်
-  keyUrl.searchParams.delete("utm_source");
-  keyUrl.searchParams.delete("utm_medium");
-  keyUrl.searchParams.delete("utm_campaign");
-  keyUrl.searchParams.delete("fbclid");
-
-  const cacheKey = new Request(keyUrl.toString(), {
-    method: "GET",
-  });
-
+  const cacheKey = new Request(new URL(request.url).toString(), { method: "GET" });
   const hit = await cache.match(cacheKey);
-
   if (hit) {
-    const headers = new Headers(hit.headers);
-    headers.set("X-CMFlix-Page-Cache", "HIT");
-
-    return new Response(hit.body, {
-      status: hit.status,
-      headers,
-    });
+    const h = new Headers(hit.headers);
+    h.set("X-CMFlix-Page-Cache", "HIT");
+    return new Response(hit.body, { status: hit.status, headers: h });
   }
-
   const html = await builder();
-
-  const response = htmlResponse(html, {
-    "Cache-Control":
-      `public, max-age=0, s-maxage=${ttlSec}, stale-while-revalidate=60`,
-    "X-CMFlix-Page-Cache": "MISS",
+  const resp = new Response(html, {
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "Cache-Control": `public, max-age=0, s-maxage=${ttlSec}`,
+      "X-CMFlix-Page-Cache": "MISS",
+    },
   });
-
-  context.waitUntil(
-    cache.put(cacheKey, response.clone()).catch(() => {})
-  );
-
-  return response;
+  context.waitUntil(cache.put(cacheKey, resp.clone()));
+  return resp;
 }
 
 
@@ -2241,15 +2214,7 @@ ${footer()}`;
 /* ══════════════════════════════════════════════════
    WATCH PAGE  — Plyr player, signed stream URLs only
    ══════════════════════════════════════════════════ */
-function watchPage(
-  item,
-  user,
-  gated,
-  streams,
-  bookmarked = false,
-  actresses = [],
-  csrfToken = ""
-) {
+function watchPage(item, user, gated, streams, bookmarked = false, actresses = []) {
   const cat = CATEGORIES[item.type] || CATEGORIES.movie;
   const loggedIn = !!user;
 
@@ -2793,10 +2758,7 @@ ${footer()}`;
       fetch('/bookmark/toggle',{
         method:'POST',
         headers:{'content-type':'application/x-www-form-urlencoded'},
-        body:
-  'id='+encodeURIComponent(id)+
-  '&action='+(on?'remove':'add')+
-  '&csrf_token='+encodeURIComponent(${JSON.stringify(csrfToken)})
+        body:'id='+encodeURIComponent(id)+'&action='+(on?'remove':'add')
       }).then(function(r){return r.json();}).then(function(d){
         if(d && d.ok){
           var nowOn=d.bookmarked;
@@ -3664,7 +3626,7 @@ function resolveRealUrl(item, s, e, download) {
 /* ══════════════════════════════════════════════════
    ROUTER
    ══════════════════════════════════════════════════ */
-async function routeRequest(context) {
+export async function onRequest(context) {
   const { request, env } = context;
   const url = new URL(request.url);
   const path = url.pathname;
@@ -3805,36 +3767,9 @@ async function routeRequest(context) {
       const c = await getActressCache(env, slug);
       actresses.push({ slug, name: nm, image: c ? c.image : "" });
     }
-    const {
-  token: watchCsrfToken,
-  isNew: watchCsrfNew
-} = await getOrCreateCsrf(request, env);
-
-const watchHeaders = {
-  "content-type": "text/html; charset=utf-8",
-  "cache-control": "private, no-store",
-};
-
-if (watchCsrfNew) {
-  watchHeaders["Set-Cookie"] = csrfCookieHeader(watchCsrfToken);
-}
-
-return new Response(
-  watchPage(
-    item,
-    user,
-    gated,
-    streams,
-    bookmarked,
-    actresses,
-    watchCsrfToken
-  ),
-  { headers: watchHeaders }
-);
-
-  { headers: { "content-type": "text/html; charset=utf-8" } }
-);
-
+    return new Response(watchPage(item, user, gated, streams, bookmarked, actresses),
+      { headers: { "content-type": "text/html; charset=utf-8" } }
+    );
   }
 
   // ───────────── STREAM (signed) — Worker PROXY + EDGE CACHE ─────────────
@@ -3858,7 +3793,16 @@ return new Response(
       return new Response("Link not valid for this session", { status: 403 });
     }
 
-   
+    // ── Stream abuse ကာကွယ် — user တစ်ယောက် ၁ မိနစ်အတွင်း request အလွန်များရင် ကန့်သတ် ──
+    // ⚠️ video byte-range request တိုင်း D1 write လုပ်ရင် D1 write quota (free 100k/day) မြန်မြန်ကုန်လို့ —
+    //    ကျပန်း ၂% (၅၀ ကြိမ်မှ ၁ ကြိမ်) လောက်သာ sampling စစ်တယ်။ abuse ကြီးရင် ဖမ်းမိဆဲ၊
+    //    D1 write ကိုတော့ ~၅၀ ဆ လျှော့ချ။ (edge cache HIT တွေက ဒီအောက်မရောက်ဘဲ ရှေ့မှာ ပြန်ပြီးသား)
+    if (Math.random() < 0.02) {
+      try {
+        const srl = await rateLimitHit(env, `stream:${user.keyId}`, 6, 60);
+        if (srl.blocked) return new Response("Too many requests", { status: 429 });
+      } catch (_) {}
+    }
 
     // ── HOTLINK / EMBED ကာကွယ်ခြင်း ──
     // တခြား website (iframe / img / video embed) က signed link ကို hotlink
@@ -4027,26 +3971,8 @@ return new Response(
         status: 403, headers: { "content-type": "application/json; charset=utf-8" },
       });
     }
-   const form = await parseForm(request);
-
-if (!(await verifyCsrf(request, form))) {
-  return new Response(
-    JSON.stringify({
-      ok: false,
-      error: "csrf failed",
-    }),
-    {
-      status: 403,
-      headers: {
-        "content-type": "application/json; charset=utf-8",
-        "cache-control": "no-store",
-      },
-    }
-  );
-}
-
-const itemId = String(form.id || "").trim();
-
+    const form = await parseForm(request);
+    const itemId = String(form.id || "").trim();
     const action = String(form.action || "").trim();
     if (!itemId) {
       return new Response(JSON.stringify({ ok: false, error: "no id" }), {
@@ -4210,9 +4136,7 @@ const itemId = String(form.id || "").trim();
   // ───────────── LOGOUT ─────────────
   if (path === "/logout") {
     const cur = await getCurrentUser(request, env);
-    if (cur && cur.sid) {
-  await revokeSession(env, cur.keyId, cur.sid);
-}
+    if (cur && !cur.isAdmin && cur.sid) await revokeSession(env, cur.keyId, cur.sid);
     return new Response(null, { status: 302, headers: { "Location": "/login", "Set-Cookie": setCookieHeader(COOKIE_NAME, "", { maxAge: 0 }) } });
   }
 
