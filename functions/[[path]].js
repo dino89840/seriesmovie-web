@@ -1792,28 +1792,61 @@ function isGuestRequest(request) {
 }
 
 async function cachedHtml(context, request, ttlSec, builder) {
-  // login ဝင်ထားရင် cache မသုံး (personalize ဖြစ်နေလို့)
+  if (request.method !== "GET") {
+    return htmlResponse(
+      await builder(),
+      { "Cache-Control": "private, no-store" }
+    );
+  }
+
+  // Login ပါတဲ့ personalized HTML ကို shared cache မလုပ်
   if (!isGuestRequest(request)) {
-    return new Response(await builder(), { headers: { "content-type": "text/html; charset=utf-8" } });
+    return htmlResponse(
+      await builder(),
+      { "Cache-Control": "private, no-store" }
+    );
   }
+
   const cache = caches.default;
-  const cacheKey = new Request(new URL(request.url).toString(), { method: "GET" });
-  const hit = await cache.match(cacheKey);
-  if (hit) {
-    const h = new Headers(hit.headers);
-    h.set("X-CMFlix-Page-Cache", "HIT");
-    return new Response(hit.body, { status: hit.status, headers: h });
-  }
-  const html = await builder();
-  const resp = new Response(html, {
-    headers: {
-      "content-type": "text/html; charset=utf-8",
-      "Cache-Control": `public, max-age=0, s-maxage=${ttlSec}`,
-      "X-CMFlix-Page-Cache": "MISS",
-    },
+
+  const keyUrl = new URL(request.url);
+  keyUrl.hash = "";
+
+  // Tracking parameter တွေက cache entry မပေါက်ကွဲအောင် ဖယ်
+  keyUrl.searchParams.delete("utm_source");
+  keyUrl.searchParams.delete("utm_medium");
+  keyUrl.searchParams.delete("utm_campaign");
+  keyUrl.searchParams.delete("fbclid");
+
+  const cacheKey = new Request(keyUrl.toString(), {
+    method: "GET",
   });
-  context.waitUntil(cache.put(cacheKey, resp.clone()));
-  return resp;
+
+  const hit = await cache.match(cacheKey);
+
+  if (hit) {
+    const headers = new Headers(hit.headers);
+    headers.set("X-CMFlix-Page-Cache", "HIT");
+
+    return new Response(hit.body, {
+      status: hit.status,
+      headers,
+    });
+  }
+
+  const html = await builder();
+
+  const response = htmlResponse(html, {
+    "Cache-Control":
+      `public, max-age=0, s-maxage=${ttlSec}, stale-while-revalidate=60`,
+    "X-CMFlix-Page-Cache": "MISS",
+  });
+
+  context.waitUntil(
+    cache.put(cacheKey, response.clone()).catch(() => {})
+  );
+
+  return response;
 }
 
 
@@ -2264,7 +2297,15 @@ ${footer()}`;
 /* ══════════════════════════════════════════════════
    WATCH PAGE  — Plyr player, signed stream URLs only
    ══════════════════════════════════════════════════ */
-function watchPage(item, user, gated, streams, bookmarked = false, actresses = []) {
+function watchPage(
+  item,
+  user,
+  gated,
+  streams,
+  bookmarked = false,
+  actresses = [],
+  csrfToken = ""
+) {
   const cat = CATEGORIES[item.type] || CATEGORIES.movie;
   const loggedIn = !!user;
 
