@@ -4079,8 +4079,25 @@ return new Response(
       });
     }
     const form = await parseForm(request);
-    const itemId = String(form.id || "").trim();
-    const action = String(form.action || "").trim();
+
+if (!(await verifyCsrf(request, form))) {
+  return new Response(
+    JSON.stringify({
+      ok: false,
+      error: "csrf failed",
+    }),
+    {
+      status: 403,
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        "cache-control": "no-store",
+      },
+    }
+  );
+}
+
+const itemId = String(form.id || "").trim();
+
     if (!itemId) {
       return new Response(JSON.stringify({ ok: false, error: "no id" }), {
         status: 400, headers: { "content-type": "application/json; charset=utf-8" },
