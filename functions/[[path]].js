@@ -1,3 +1,7 @@
+
+
+
+
 // ── Session / key constants ──
 const SESSION_HOURS    = 24 * 30;
 const COOKIE_NAME      = "__Host-cmflix_sess";
@@ -495,8 +499,17 @@ async function getSetting(env, key) {
 async function setSetting(env, key, value) {
   await db(env).prepare(
     `INSERT INTO app_settings (skey, value, updated_at) VALUES (?,?,?)
-     ON CONFLICT(skey) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`
+     ON CONFLICT(skey) DO UPDATE SET
+       value=excluded.value,
+       updated_at=excluded.updated_at`
   ).bind(key, String(value), Date.now()).run();
+
+  if (key === "maintenance") {
+    _maintenanceCache = {
+      value: String(value) === "1",
+      expiresAt: Date.now() + 5000,
+    };
+  }
 }
 
 let _maintenanceCache = {
