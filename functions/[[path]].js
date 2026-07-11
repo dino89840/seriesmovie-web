@@ -1,4 +1,8 @@
 
+
+
+
+
 // ── Session / key constants ──
 const SESSION_HOURS    = 24 * 30;
 const COOKIE_NAME      = "__Host-cmflix_sess";
@@ -504,7 +508,7 @@ async function setSetting(env, key, value) {
   if (key === "maintenance") {
     _maintenanceCache = {
       value: String(value) === "1",
-      expiresAt: Date.now() + 5000,
+      expiresAt: Date.now() + 30000,
     };
   }
 }
@@ -526,7 +530,7 @@ async function isMaintenanceOn(env) {
 
     _maintenanceCache = {
       value,
-      expiresAt: now + 5000, // ၅ စက္ကန့်
+      expiresAt: now + 30000, // ၃၀ စက္ကန့်
     };
 
     return value;
@@ -3959,26 +3963,6 @@ return new Response(
     if (!refererOk) {
       return new Response("Hotlink not allowed", { status: 403 });
     }
-
-    // ── PROXY POOL REDIRECT ──
-    // proxy pool သတ်မှတ်ထားရင် — ဒီ signed request ကို random proxy worker ဆီ 302 redirect လုပ်ပြီး
-    // video body ကို အဲဒီ worker က ဆွဲ/ပြန်ပို့စေမယ် → ပင်မ worker မှာ heavy proxy fetch subrequest မကုန်။
-    // download (v.d===1) ကိုတော့ redirect မလုပ်ဘဲ ပင်မ worker ကိုယ်တိုင် လုပ် (filename header မှန်စေရန်)။
-    // proxy worker မှာ D1 share ထားတာမို့ real URL ကို ပို့စရာ မလို — item id + signed params ပဲ ပို့ (real URL မပေါ်)။
-    if (v.d !== 1) {
-      const proxyBase = pickStreamProxy(
-  `${id}|${v.s}|${v.e}|${v.d}`
-);
-      if (proxyBase) {
-        const proxyUrl = `${proxyBase}/stream/${encodeURIComponent(id)}?${url.searchParams.toString()}`;
-        return new Response(null, {
-          status: 302,
-          headers: { "Location": proxyUrl, "Cache-Control": "no-store" },
-        });
-      }
-      // proxyBase == null (pool ဗလာ) → ဒီအောက်က ပင်မ worker proxy code ကို ဆက်သုံး (fallback)
-    }
-
     const real = resolveRealUrl(item, v.s, v.e, v.d === 1);
     if (!isHttpUrl(real)) return new Response("No source", { status: 404 });
 
@@ -4807,3 +4791,7 @@ export async function onRequest(context) {
     );
   }
 }
+
+
+
+
