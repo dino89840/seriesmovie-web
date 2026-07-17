@@ -1573,8 +1573,8 @@ function isHttpUrl(raw) {
    • ⚠️ URL နောက်မှာ slash ("/") မထည့်ပါနဲ့
    ══════════════════════════════════════════════════ */
 const STREAM_PROXY_POOL = [
-  "https://wwwa.cmflix.kdns.fr",
-  "https://wwwk.cmflix.kdns.fr",
+  "https://kteam.cmflix.opik.net",
+  "https://a.flixcm.cloud-ip.cc",
 ];
 
 // Random မရွေးတော့ဘဲ item/episode တူရင် proxy တူတူရစေမယ်။
@@ -4791,7 +4791,6 @@ export async function onRequest(context) {
     );
   }
 }
-
 
 
 
