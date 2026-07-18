@@ -1574,7 +1574,7 @@ function isHttpUrl(raw) {
    ══════════════════════════════════════════════════ */
 const STREAM_PROXY_POOL = [
   "https://kteam.cmflix.opik.net",
-  "https://a.flixcm.cloud-ip.cc",
+  "https://watch.flix.ezgateway.net",
 ];
 
 // Random မရွေးတော့ဘဲ item/episode တူရင် proxy တူတူရစေမယ်။
