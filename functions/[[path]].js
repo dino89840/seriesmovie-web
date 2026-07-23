@@ -2,7 +2,6 @@
 
 
 
-
 // ── Session / key constants ──
 const SESSION_HOURS    = 24 * 30;
 const COOKIE_NAME      = "__Host-cmflix_sess";
@@ -1820,50 +1819,95 @@ function htmlResponse(body, extraHeaders = {}, status = 200) {
 // ── Public page (login မလိုတာ) — edge cache (caches.default) helper ──
 // login ဝင်/မဝင်အလိုက် HTML ကွဲတာမို့၊ guest (login မဝင်) request တွေကိုသာ cache လုပ်မယ်။
 // user login ဝင်ထားရင် (cookie ပါရင်) cache မလုပ်ဘဲ fresh ပြန်ပေးတယ် → key chip/My List မှန်အောင်။
+// ── Public guest page cache helper ──
+// Session cookie မပါတဲ့ guest response ကိုသာ shared edge cache ထဲ သိမ်းမယ်။
 function isGuestRequest(request) {
   const cookie = request.headers.get("Cookie") || "";
-  return cookie.indexOf(COOKIE_NAME + "=") === -1;  // session cookie မပါ → guest
+
+  return !cookie
+    .split(";")
+    .map(v => v.trim())
+    .some(v => v.startsWith(COOKIE_NAME + "="));
+}
+
+function normalizePublicCacheUrl(requestUrl) {
+  const keyUrl = new URL(requestUrl);
+
+  keyUrl.hash = "";
+
+  // Tracking parameters တွေကြောင့် cache key အများကြီး မဖြစ်စေရန်
+  const removeParams = [
+    "utm_source",
+    "utm_medium",
+    "utm_campaign",
+    "utm_term",
+    "utm_content",
+    "fbclid",
+    "gclid",
+  ];
+
+  for (const name of removeParams) {
+    keyUrl.searchParams.delete(name);
+  }
+
+  // guest မှာ welcome မပြနိုင်တာကြောင့် cache key ထဲ မထည့်
+  keyUrl.searchParams.delete("welcome");
+
+  // page=1 နဲ့ page မပါတာကို cache entry တစ်ခုတည်းသုံး
+  if (keyUrl.searchParams.get("page") === "1") {
+    keyUrl.searchParams.delete("page");
+  }
+
+  // Query parameter order တူအောင် sort
+  keyUrl.searchParams.sort();
+
+  return keyUrl;
 }
 
 async function cachedHtml(context, request, ttlSec, builder) {
+  // GET မဟုတ်ရင် public cache လုံးဝမလုပ်
   if (request.method !== "GET") {
     return htmlResponse(
       await builder(),
-      { "Cache-Control": "private, no-store" }
+      {
+        "Cache-Control": "private, no-store",
+        "X-CMFlix-Page-Cache": "BYPASS-METHOD",
+      }
     );
   }
 
-  // Login ပါတဲ့ personalized HTML ကို shared cache မလုပ်
+  // Login/session ပါရင် personalized page ဖြစ်တာကြောင့် shared cache မလုပ်
   if (!isGuestRequest(request)) {
     return htmlResponse(
       await builder(),
-      { "Cache-Control": "private, no-store" }
+      {
+        "Cache-Control": "private, no-store",
+        "X-CMFlix-Page-Cache": "BYPASS-SESSION",
+      }
     );
   }
 
   const cache = caches.default;
-
-  const keyUrl = new URL(request.url);
-  keyUrl.hash = "";
-
-  // Tracking parameter တွေက cache entry မပေါက်ကွဲအောင် ဖယ်
-  keyUrl.searchParams.delete("utm_source");
-  keyUrl.searchParams.delete("utm_medium");
-  keyUrl.searchParams.delete("utm_campaign");
-  keyUrl.searchParams.delete("fbclid");
+  const keyUrl = normalizePublicCacheUrl(request.url);
 
   const cacheKey = new Request(keyUrl.toString(), {
     method: "GET",
+    headers: {
+      "Accept": "text/html",
+    },
   });
 
-  const hit = await cache.match(cacheKey);
+  const cached = await cache.match(cacheKey);
 
-  if (hit) {
-    const headers = new Headers(hit.headers);
+  if (cached) {
+    const headers = new Headers(cached.headers);
+
     headers.set("X-CMFlix-Page-Cache", "HIT");
+    headers.set("Age", headers.get("Age") || "0");
 
-    return new Response(hit.body, {
-      status: hit.status,
+    return new Response(cached.body, {
+      status: cached.status,
+      statusText: cached.statusText,
       headers,
     });
   }
@@ -1871,17 +1915,34 @@ async function cachedHtml(context, request, ttlSec, builder) {
   const html = await builder();
 
   const response = htmlResponse(html, {
+    /*
+     * Browser — 60 seconds
+     * Shared edge — ttlSec
+     *
+     * max-age=0 မသုံးတော့တာက public cache eligibility
+     * အတိအကျ ရှင်းလင်းစေရန် ဖြစ်သည်။
+     */
     "Cache-Control":
-      `public, max-age=0, s-maxage=${ttlSec}, stale-while-revalidate=60`,
+      `public, max-age=60, s-maxage=${ttlSec}, stale-while-revalidate=60, stale-if-error=86400`,
+
+    "Cloudflare-CDN-Cache-Control":
+      `public, max-age=${ttlSec}, stale-while-revalidate=60, stale-if-error=86400`,
+
     "X-CMFlix-Page-Cache": "MISS",
   });
 
   context.waitUntil(
-    cache.put(cacheKey, response.clone()).catch(() => {})
+    cache.put(cacheKey, response.clone()).catch(error => {
+      console.error("Public page cache.put failed", {
+        url: keyUrl.toString(),
+        message: String(error?.message || error || ""),
+      });
+    })
   );
 
   return response;
 }
+
 
 
 // Plyr CDN (modern player)
@@ -3583,131 +3644,197 @@ function adminEditPage(item, csrfToken, error = "") {
    AUTO-PARSE SQL LOGS & SERIES JSON SANITIZER
    ══════════════════════════════════════════════════ */
 function parseRawTextToSeasons(rawText) {
-  const urlRegex = /(https?:\/\/[^\s"'<>^|`\x00-\x1F\x7F-\x9F]+\.(?:mp4|mkv|m3u8|webm|mov)(?:\?[^\s"<>^|`\x00-\x1F\x7F-\x9F]*)?)/gi;
-  const matches = [...new Set(rawText.match(urlRegex) || [])];
-  
-  if (!matches.length) return null;
-  
-  const epsMap = [];
-  
-  for (let url of matches) {
-    url = url.split(/[\x00-\x1F\x7F-\x9F]/)[0];
-    const decoded = decodeURIComponent(url);
+  const text = String(rawText || "");
+
+  /*
+   * Extension ပါ/မပါ direct HTTP/HTTPS URL အားလုံး ရှာမယ်။
+   * Closing punctuation တွေကို အောက်မှာ ဖြတ်ထုတ်မယ်။
+   */
+  const urlRegex =
+    /https?:\/\/[^\s"'<>^|`\x00-\x1F\x7F-\x9F]+/gi;
+
+  const rawMatches = text.match(urlRegex) || [];
+
+  const cleanedUrls = rawMatches
+    .map(value =>
+      String(value)
+        .replace(/[),.;\]}]+$/g, "")
+        .trim()
+    )
+    .filter(value => isHttpUrl(value))
+    .map(value => value.slice(0, 1000));
+
+  const matches = [
+    ...new Set(cleanedUrls),
+  ];
+
+  if (!matches.length) {
+    return null;
+  }
+
+  const episodeRows = [];
+
+  for (const originalUrl of matches) {
+    let decoded = originalUrl;
+
+    try {
+      decoded = decodeURIComponent(
+        originalUrl
+      );
+    } catch (_) {}
+
     let seasonNum = 1;
-    let epNum = null;
-    
-    const s1e1 = decoded.match(/[sS](\d+)[eE][pP]?(\d+)/);
-    if (s1e1) {
-      seasonNum = parseInt(s1e1[1], 10);
-      epNum = parseInt(s1e1[2], 10);
+    let episodeNum = null;
+
+    // S01E02 / s1ep2
+    const seasonEpisode = decoded.match(
+      /(?:^|[^a-z0-9])s(\d{1,3})[\s._-]*e(?:p)?(\d{1,4})(?:[^a-z0-9]|$)/i
+    );
+
+    if (seasonEpisode) {
+      seasonNum = parseInt(
+        seasonEpisode[1],
+        10
+      );
+
+      episodeNum = parseInt(
+        seasonEpisode[2],
+        10
+      );
     } else {
-      const eOnly = decoded.match(/(?:[^a-zA-Z0-9]|^)[eE](\d+)(?:[^a-zA-Z0-9]|$)/);
-      if (eOnly) {
-        epNum = parseInt(eOnly[1], 10);
+      // Episode 2 / ep-2 / ep_2
+      const episodeWord = decoded.match(
+        /(?:^|[^a-z0-9])(?:episode|ep|e)[\s._-]*(\d{1,4})(?:[^a-z0-9]|$)/i
+      );
+
+      if (episodeWord) {
+        episodeNum = parseInt(
+          episodeWord[1],
+          10
+        );
       } else {
-        const epWord = decoded.match(/(?:[^a-zA-Z0-9]|^)(?:ep|episode)[-_\s]?(\d+)/i);
-        if (epWord) {
-          epNum = parseInt(epWord[1], 10);
-        } else {
-          const baseName = decoded.split('/').pop() || "";
-          const numOnly = baseName.match(/(?:^|[^0-9])(\d+)(?:\.mp4|\.mkv|\.avi|$)/i);
-          if (numOnly) {
-            epNum = parseInt(numOnly[1], 10);
-          }
+        // URL pathname နောက်ဆုံး filename မှာ number ရှိရင်သုံး
+        let pathname = "";
+
+        try {
+          pathname = new URL(
+            originalUrl
+          ).pathname;
+        } catch (_) {}
+
+        const baseName =
+          pathname.split("/").pop() || "";
+
+        const numberOnly = baseName.match(
+          /(?:^|[^0-9])(\d{1,4})(?:[^0-9]|$)/
+        );
+
+        if (numberOnly) {
+          episodeNum = parseInt(
+            numberOnly[1],
+            10
+          );
         }
       }
     }
-    
-    if (epNum !== null && epNum > 1000) {
-      epNum = null;
+
+    if (
+      !Number.isFinite(seasonNum) ||
+      seasonNum < 1 ||
+      seasonNum > 100
+    ) {
+      seasonNum = 1;
     }
-    
-    epsMap.push({
+
+    if (
+      !Number.isFinite(episodeNum) ||
+      episodeNum < 1 ||
+      episodeNum > 1000
+    ) {
+      episodeNum = null;
+    }
+
+    episodeRows.push({
       season: seasonNum,
-      ep: epNum,
-      video_url: url
+      ep: episodeNum,
+      video_url: originalUrl,
     });
   }
-  
-  let fallbackEp = 1;
-  epsMap.forEach(item => {
-    if (item.ep === null) {
-      item.ep = fallbackEp++;
+
+  /*
+   * Episode number မတွေ့တဲ့ URL တွေကို
+   * ပေါ်လာတဲ့အစဉ်အတိုင်း နံပါတ်ပေးမယ်။
+   */
+  const nextEpisodeBySeason = new Map();
+
+  for (const row of episodeRows) {
+    const currentNext =
+      nextEpisodeBySeason.get(row.season) || 1;
+
+    if (row.ep == null) {
+      row.ep = currentNext;
+
+      nextEpisodeBySeason.set(
+        row.season,
+        currentNext + 1
+      );
+    } else {
+      nextEpisodeBySeason.set(
+        row.season,
+        Math.max(
+          currentNext,
+          row.ep + 1
+        )
+      );
     }
-  });
-  
-  const seasonsGrouped = {};
-  for (const item of epsMap) {
-    if (!seasonsGrouped[item.season]) {
-      seasonsGrouped[item.season] = [];
+  }
+
+  const grouped = new Map();
+
+  for (const row of episodeRows) {
+    if (!grouped.has(row.season)) {
+      grouped.set(row.season, []);
     }
-    seasonsGrouped[item.season].push({
-      ep: item.ep,
-      title: `Episode ${item.ep}`,
-      video_url: item.video_url,
-      download_url: ""
+
+    grouped.get(row.season).push({
+      ep: row.ep,
+      title: `Episode ${row.ep}`,
+      video_url: row.video_url,
+      download_url: "",
     });
   }
-  
-  const finalSeasons = Object.keys(seasonsGrouped)
-    .map(s => {
-      const sortedEps = seasonsGrouped[s].sort((a, b) => a.ep - b.ep);
-      const uniqueEps = [];
-      const seen = new Set();
-      for (const e of sortedEps) {
-        if (!seen.has(e.ep)) {
-          seen.add(e.ep);
-          uniqueEps.push(e);
-        }
-      }
+
+  return [...grouped.entries()]
+    .map(([season, episodes]) => {
+      episodes.sort(
+        (a, b) => a.ep - b.ep
+      );
+
+      const seenEpisodes = new Set();
+
+      const uniqueEpisodes =
+        episodes.filter(episode => {
+          if (
+            seenEpisodes.has(episode.ep)
+          ) {
+            return false;
+          }
+
+          seenEpisodes.add(episode.ep);
+          return true;
+        });
+
       return {
-        season: parseInt(s, 10),
-        episodes: uniqueEps
+        season,
+        episodes: uniqueEpisodes,
       };
     })
-    .sort((a, b) => a.season - b.season);
-    
-  return finalSeasons;
+    .sort(
+      (a, b) =>
+        a.season - b.season
+    );
 }
 
-function sanitizeSeasons(raw) {
-  const trimmed = String(raw || "").trim();
-  
-  if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
-    try {
-      const arr = JSON.parse(trimmed);
-      if (Array.isArray(arr)) {
-        const out = [];
-        for (const s of arr) {
-          if (!s || typeof s !== "object") continue;
-          const season = parseInt(s.season || out.length + 1, 10) || (out.length + 1);
-          const eps = Array.isArray(s.episodes) ? s.episodes : [];
-          const cleanEps = [];
-          for (const e of eps) {
-            if (!e || typeof e !== "object") continue;
-            const video_url = String(e.video_url || "").trim().slice(0, 1000);
-            if (!isHttpUrl(video_url)) continue;
-            cleanEps.push({
-              ep: parseInt(e.ep || cleanEps.length + 1, 10) || (cleanEps.length + 1),
-              title: String(e.title || "").trim().slice(0, 160),
-              video_url,
-              download_url: isHttpUrl(e.download_url) ? String(e.download_url).trim().slice(0, 1000) : "",
-            });
-          }
-          out.push({ season, episodes: cleanEps });
-        }
-        if (out.length) return { ok: true, seasons: out };
-      }
-    } catch (_) {}
-  }
-  
-  const autoParsed = parseRawTextToSeasons(trimmed);
-  if (autoParsed && autoParsed.length > 0) {
-    return { ok: true, seasons: autoParsed };
-  }
-  
-  return { ok: false, err: "ထည့်သွင်းလိုက်သော စာသားထဲတွင် အပိုင်း ဗီဒီယို Link များ ရှာမတွေ့ပါ။" };
-}
 
 /* ══════════════════════════════════════════════════
    Build signed streams for watchPage
@@ -3855,36 +3982,129 @@ async function routeRequest(context) {
   }
 
 
-  // ───────────── SEARCH ─────────────
-  if (path === "/search" && method === "GET") {
-    const user = await getCurrentUser(request, env);
-    const q = String(url.searchParams.get("q") || "").trim().slice(0, 80);
-    let page = parseInt(url.searchParams.get("page") || "1", 10);
-    if (!Number.isFinite(page) || page < 1) page = 1;
-    // SQL level မှာ LIKE + LIMIT/OFFSET နဲ့ တိုက်ရိုက် filter (item အကုန်မဆွဲ → D1 read ချွေတာ)
-    const { items: slice, total } = await searchItemsPaged(env, q, page, ITEMS_PER_PAGE);
-    const totalPages = Math.max(1, Math.ceil(total / ITEMS_PER_PAGE));
-    if (page > totalPages) page = totalPages;
-    const searchHeaders = { "content-type": "text/html; charset=utf-8" };
-    // guest ဆို search ရလဒ်ကို browser မှာ ခဏ (၆၀ စက္ကန့်) cache — ထပ်ရိုက်ရင် မြန်
-    if (!user) searchHeaders["Cache-Control"] = "public, max-age=60";
-    return new Response(
-      gridPage(`🔍 "${q}"`, "", slice, page, totalPages, total, (p) => `/search?q=${encodeURIComponent(q)}&page=${p}`, q, user),
-      { headers: searchHeaders }
+// ───────────── SEARCH ─────────────
+if (path === "/search" && method === "GET") {
+  const user = await getCurrentUser(request, env);
+
+  const q = String(url.searchParams.get("q") || "")
+    .trim()
+    .slice(0, 80);
+
+  let page = parseInt(
+    url.searchParams.get("page") || "1",
+    10
+  );
+
+  if (!Number.isFinite(page) || page < 1) {
+    page = 1;
+  }
+
+  const buildSearchPage = async (pageUser) => {
+    const {
+      items: slice,
+      total,
+    } = await searchItemsPaged(
+      env,
+      q,
+      page,
+      ITEMS_PER_PAGE
+    );
+
+    const totalPages = Math.max(
+      1,
+      Math.ceil(total / ITEMS_PER_PAGE)
+    );
+
+    const safePage = Math.min(page, totalPages);
+
+    return gridPage(
+      `🔍 "${q}"`,
+      "",
+      slice,
+      safePage,
+      totalPages,
+      total,
+      p =>
+        `/search?q=${encodeURIComponent(q)}&page=${p}`,
+      q,
+      pageUser
+    );
+  };
+
+  // Login ဝင်ထားသူက premium label/My List စတာပါလို့ private
+  if (user) {
+    return htmlResponse(
+      await buildSearchPage(user),
+      {
+        "Cache-Control": "private, no-store",
+      }
     );
   }
 
+  // Guest search result ကို edge မှာ ၂ မိနစ် cache
+  return cachedHtml(
+    context,
+    request,
+    120,
+    () => buildSearchPage(null)
+  );
+}
+
+
   // ───────────── WATCH ─────────────
   if (path.startsWith("/watch/") && method === "GET") {
-    const id = path.slice("/watch/".length).split("/")[0];
-    const item = await getItem(env, id);
-    if (!item) {
-      return new Response(pageShell("Not found", `${topBar("")}<div class="wrap"><div class="empty">ဇာတ်ကား ရှာမတွေ့ပါ · <a href="/" style="color:var(--acc2)">Home</a></div></div>`), {
-        headers: { "content-type": "text/html; charset=utf-8" }, status: 404,
-      });
-    }
-    const user = await getCurrentUser(request, env);
-    const gated = !user || isExpired(user);
+  const id = path
+    .slice("/watch/".length)
+    .split("/")[0];
+
+  const user = await getCurrentUser(
+    request,
+    env
+  );
+
+  const item = await getItem(
+    env,
+    id
+  );
+
+  /*
+   * Published မဟုတ်တဲ့ Draft ကို public/user မကြည့်နိုင်ရ။
+   * Admin login ဝင်ထားသူပဲ preview ကြည့်နိုင်မယ်။
+   */
+  const canViewDraft =
+    !!(user && user.isAdmin);
+
+  if (
+    !item ||
+    (
+      item.published !== 1 &&
+      !canViewDraft
+    )
+  ) {
+    return new Response(
+      pageShell(
+        "Not found",
+        `${topBar("", "", user)}
+         <div class="wrap">
+           <div class="empty">
+             ဇာတ်ကား ရှာမတွေ့ပါ ·
+             <a href="/" style="color:var(--acc2)">Home</a>
+           </div>
+         </div>`
+      ),
+      {
+        status: 404,
+        headers: {
+          "content-type": "text/html; charset=utf-8",
+          "cache-control": "private, no-store",
+        },
+      }
+    );
+  }
+
+  const gated =
+    !user ||
+    isExpired(user);
     const streams = await buildStreams(env, item, gated, user);
     const bookmarked = (user && !user.isAdmin) ? await isBookmarked(env, user.keyId, item.id) : false;
     // မင်းသမီးနာမည်တွေအတွက် ပုံ/slug ယူ (cache ကနေ)
@@ -3966,47 +4186,135 @@ return new Response(
     const real = resolveRealUrl(item, v.s, v.e, v.d === 1);
     if (!isHttpUrl(real)) return new Response("No source", { status: 404 });
 
-    const rangeHeader = request.headers.get("Range");
+    const rangeHeader =
+  request.headers.get("Range");
 
-    // ── EDGE CACHE: download မဟုတ်တဲ့ stream chunk တွေကိုသာ cache လုပ်မယ် ──
-    // cache key က real-url + range ပေါ်မူတည်တယ် (signed/session token မပါ → cache hit များတယ်)
-    const cache = caches.default;
-    let cacheKey = null;
-    // download မဟုတ်တဲ့ stream တွေထဲက — ဗီဒီယိုအစ (bytes=0-) နဲ့ full request ကိုသာ cache
-    // (ကြားက seek byte တွေကို cache မလုပ်ဘူး → cache entry မပေါက်ကွဲ + seek bug မရှိ)
-    const isInitialChunk = !rangeHeader || /^bytes=0-/i.test(rangeHeader);
-    const cacheable = v.d !== 1 && isInitialChunk;
-    if (cacheable) {
-      const ckUrl = new URL(request.url);
-      ckUrl.search = ""; // signed params တွေ ဖယ်
-      ckUrl.searchParams.set("rk", real);                  // real source key
-      ckUrl.searchParams.set("rg", rangeHeader || "full"); // bytes=0- (သို့) full
-      cacheKey = new Request(ckUrl.toString(), { method: "GET" });
-      const cached = await cache.match(cacheKey);
-      if (cached) {
-        const h = new Headers(cached.headers);
-        h.set("X-CMFlix-Cache", "HIT");
-        return new Response(cached.body, { status: cached.status, headers: h });
+const fwdHeaders = new Headers();
+
+if (rangeHeader) {
+  const rangeMatch = rangeHeader.match(
+    /^bytes=(\d*)-(\d*)$/i
+  );
+
+  if (!rangeMatch) {
+    return new Response(
+      "Invalid Range",
+      {
+        status: 416,
+        headers: {
+          "cache-control": "no-store",
+        },
       }
-    }
+    );
+  }
 
-    const fwdHeaders = new Headers();
-    if (rangeHeader) fwdHeaders.set("Range", rangeHeader);
-    const ifRange = request.headers.get("If-Range");
-    if (ifRange) fwdHeaders.set("If-Range", ifRange);
+  const startText = rangeMatch[1];
+  const endText = rangeMatch[2];
+
+  if (!startText && !endText) {
+    return new Response(
+      "Invalid Range",
+      {
+        status: 416,
+        headers: {
+          "cache-control": "no-store",
+        },
+      }
+    );
+  }
+
+  if (startText && endText) {
+    const start = Number(startText);
+    const end = Number(endText);
+
+    if (
+      !Number.isSafeInteger(start) ||
+      !Number.isSafeInteger(end) ||
+      start < 0 ||
+      end < start
+    ) {
+      return new Response(
+        "Invalid Range",
+        {
+          status: 416,
+          headers: {
+            "cache-control": "no-store",
+          },
+        }
+      );
+    }
+  }
+
+  fwdHeaders.set(
+    "Range",
+    `bytes=${startText}-${endText}`
+  );
+}
+
+const ifRange =
+  request.headers.get("If-Range");
+
+if (ifRange) {
+  fwdHeaders.set(
+    "If-Range",
+    ifRange
+  );
+}
 
     let originResp;
-    try {
-      // stream (download မဟုတ်) initial chunk ကို Cloudflare origin cache မှာပါ သိမ်း
-      // → edge cache miss ဖြစ်တောင် origin fetch subrequest ချွေတာ
-      const fetchOpts = { method: "GET", headers: fwdHeaders, redirect: "follow" };
-      if (cacheable) {
-        fetchOpts.cf = { cacheTtl: 86400, cacheEverything: true };
-      }
-      originResp = await fetch(real, fetchOpts);
-    } catch (_) {
-      return new Response("Upstream error", { status: 502 });
+
+try {
+  const fetchOpts = {
+    method: "GET",
+    headers: fwdHeaders,
+    redirect: "follow",
+  };
+
+  /*
+   * Download ကို cache မလုပ်။
+   * Main worker က playback fallback handle လုပ်ရမှသာ
+   * outgoing origin cache သုံးမယ်။
+   */
+  if (v.d !== 1) {
+    fetchOpts.cf = {
+      cacheEverything: true,
+      cacheTtlByStatus: {
+        "200-299": 86400,
+        "301-302": 300,
+        "404": 60,
+        "500-599": 0,
+      },
+    };
+  }
+
+  originResp = await fetch(
+    real,
+    fetchOpts
+  );
+} catch (error) {
+  console.error(
+    "Main stream upstream error",
+    {
+      itemId: id,
+      message: String(
+        error?.message ||
+        error ||
+        ""
+      ),
     }
+  );
+
+  return new Response(
+    "Upstream error",
+    {
+      status: 502,
+      headers: {
+        "cache-control": "no-store",
+      },
+    }
+  );
+}
+
 
     if (!originResp.ok && originResp.status !== 206) {
       return new Response("Upstream unavailable", { status: 502 });
@@ -4062,27 +4370,45 @@ return new Response(
         return new Response(originResp.body, { status: originResp.status, headers: outHeaders });
     }
 
-    // ── stream (download မဟုတ်) → edge cache မှာ သိမ်းမယ် ──
-    outHeaders.set("Content-Disposition", "inline");
-    // edge + browser cache — video chunk တွေကို browser ကပါ ကြာကြာသိမ်း → seek/replay မြန်
-    outHeaders.set("Cache-Control", "public, max-age=86400, s-maxage=604800, immutable");
-    outHeaders.set("X-CMFlix-Cache", "MISS");
-    // CORS — video element cross-origin မှာ ပြဿနာ မဖြစ်အောင်
-    outHeaders.set("Access-Control-Allow-Origin", url.host ? `https://${url.host}` : "*");
-    outHeaders.set("Timing-Allow-Origin", "*");
+// ── Playback fallback response ──
+// Signed response ကို public shared cache မလုပ်ဘူး။
+// Shared cache က အပေါ်က fetch(real, { cf: ... }) အဆင့်မှာ ရနေတယ်။
+outHeaders.set(
+  "Content-Disposition",
+  "inline"
+);
 
-    if (cacheable && cacheKey && (originResp.status === 200 || originResp.status === 206)) {
-      // response body ကို နှစ်ခွဲ — တစ်ခု client ကို၊ တစ်ခု cache ကို
-      const respForCache = new Response(originResp.body, { status: originResp.status, headers: outHeaders });
-      const respForClient = respForCache.clone();
-      // cache write ကို နောက်ကွယ်မှာ လုပ်စေမယ် (client ကို မစောင့်စေဘူး)
-      context.waitUntil(cache.put(cacheKey, respForCache));
-      return respForClient;
-    }
+outHeaders.set(
+  "Cache-Control",
+  "private, max-age=3600"
+);
 
-    return new Response(originResp.body, { status: originResp.status, headers: outHeaders });
+outHeaders.set(
+  "X-CMFlix-Cache",
+  originResp.headers.get(
+    "CF-Cache-Status"
+  ) || "UNKNOWN"
+);
+
+outHeaders.set(
+  "Access-Control-Allow-Origin",
+  `https://${url.host}`
+);
+
+outHeaders.set(
+  "Timing-Allow-Origin",
+  "*"
+);
+
+return new Response(
+  originResp.body,
+  {
+    status: originResp.status,
+    statusText: originResp.statusText,
+    headers: outHeaders,
+  });
+
   }
-
 
     // ───────────── BOOKMARK TOGGLE ─────────────
   if (path === "/bookmark/toggle" && method === "POST") {
@@ -4268,24 +4594,98 @@ return new Response(
     if (csrfNew) headers["Set-Cookie"] = csrfCookieHeader(csrfToken);
     return new Response(myListPage(items, user, csrfToken), { headers });
   }
-    // ───────────── ACTRESS PAGE (public) ─────────────
-  if (path.startsWith("/actress/") && method === "GET") {
-    const slug = decodeURIComponent(path.slice("/actress/".length).split("/")[0]);
-    const user = await getCurrentUser(request, env);
-    const items = await listItemsByActressSlug(env, slug);
-    // cache ထဲက ပုံ/နာမည် ယူ၊ မရှိရင် items ထဲက နာမည်ကို သုံး
-    let info = await getActressCache(env, slug);
-    if (!info) {
-      let dispName = slug;
-      for (const it of items) {
-        const found = parseActressNames(it.actress).find(n => actressNameToSlug(n) === slug);
-        if (found) { dispName = found; break; }
-      }
-      info = { slug, name: dispName, image: "", url: "" };
-    }
-    return new Response(actressPage(info, items, user),
-      { headers: { "content-type": "text/html; charset=utf-8" } });
+// ───────────── ACTRESS PAGE (public) ─────────────
+if (path.startsWith("/actress/") && method === "GET") {
+  let slug = "";
+
+  try {
+    slug = decodeURIComponent(
+      path
+        .slice("/actress/".length)
+        .split("/")[0]
+    );
+  } catch (_) {
+    return new Response("Bad actress slug", {
+      status: 400,
+      headers: {
+        "content-type": "text/plain; charset=utf-8",
+        "cache-control": "no-store",
+      },
+    });
   }
+
+  slug = actressNameToSlug(slug);
+
+  if (!slug) {
+    return Response.redirect(
+      new URL("/", url).toString(),
+      302
+    );
+  }
+
+  const user = await getCurrentUser(request, env);
+
+  const buildActressPage = async (pageUser) => {
+    const items = await listItemsByActressSlug(
+      env,
+      slug
+    );
+
+    let info = await getActressCache(
+      env,
+      slug
+    );
+
+    if (!info) {
+      let displayName = slug;
+
+      for (const item of items) {
+        const found = parseActressNames(
+          item.actress
+        ).find(
+          name =>
+            actressNameToSlug(name) === slug
+        );
+
+        if (found) {
+          displayName = found;
+          break;
+        }
+      }
+
+      info = {
+        slug,
+        name: displayName,
+        image: "",
+        url: "",
+      };
+    }
+
+    return actressPage(
+      info,
+      items,
+      pageUser
+    );
+  };
+
+  if (user) {
+    return htmlResponse(
+      await buildActressPage(user),
+      {
+        "Cache-Control": "private, no-store",
+      }
+    );
+  }
+
+  // Guest actress page ကို ၅ မိနစ် edge cache
+  return cachedHtml(
+    context,
+    request,
+    300,
+    () => buildActressPage(null)
+  );
+}
+
 
 
   // ───────────── AUTH STATUS ─────────────
@@ -4791,6 +5191,4 @@ export async function onRequest(context) {
     );
   }
 }
-
-
 
