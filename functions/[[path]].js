@@ -3834,7 +3834,420 @@ function parseRawTextToSeasons(rawText) {
         a.season - b.season
     );
 }
+/* ══════════════════════════════════════════════════
+   SERIES JSON / RAW TEXT SANITIZER
 
+   လက်ခံနိုင်သော format များ:
+   1. Seasons JSON array
+   2. { seasons: [...] }
+   3. { season: 1, episodes: [...] }
+   4. URL string array
+   5. SQLite task log / raw text ထဲက HTTP links
+   ══════════════════════════════════════════════════ */
+function sanitizeSeasons(rawInput) {
+  const raw = String(rawInput == null ? "" : rawInput).trim();
+
+  if (!raw) {
+    return {
+      ok: false,
+      err: "Series Episodes JSON သို့မဟုတ် episode link များ ထည့်ပါ။",
+      seasons: [],
+    };
+  }
+
+  /*
+   * Form body နဲ့ D1 row အရွယ်အစား မလွန်စေရန်။
+   * 1.5 MB ထက်ကြီးရင် တစ်ခါတည်း မသိမ်းစေဘူး။
+   */
+  if (raw.length > 1500000) {
+    return {
+      ok: false,
+      err: "Series Episodes စာသားအရမ်းများနေပါတယ်။ အပိုင်းခွဲပြီး ထည့်ပါ။",
+      seasons: [],
+    };
+  }
+
+  let source = null;
+  let jsonError = "";
+
+  /*
+   * JSON ဖြစ်ရင် အရင် parse လုပ်မယ်။
+   * JSON မဟုတ်ရင် raw text / SQLite log parser သုံးမယ်။
+   */
+  try {
+    source = JSON.parse(raw);
+  } catch (error) {
+    jsonError = String(
+      error && error.message
+        ? error.message
+        : error || ""
+    );
+
+    source = parseRawTextToSeasons(raw);
+
+    if (!source || !Array.isArray(source) || !source.length) {
+      return {
+        ok: false,
+        err:
+          "JSON format မှားနေပါတယ်၊ ဒါမှမဟုတ် episode HTTP/HTTPS link မတွေ့ပါ။" +
+          (jsonError ? ` (${jsonError.slice(0, 160)})` : ""),
+        seasons: [],
+      };
+    }
+  }
+
+  /*
+   * Root object ပုံစံအမျိုးမျိုးကို seasons array အဖြစ် ပြောင်း။
+   */
+  if (
+    source &&
+    typeof source === "object" &&
+    !Array.isArray(source)
+  ) {
+    if (Array.isArray(source.seasons)) {
+      source = source.seasons;
+    } else if (Array.isArray(source.episodes)) {
+      source = [
+        {
+          season: source.season || source.season_number || 1,
+          episodes: source.episodes,
+        },
+      ];
+    } else {
+      /*
+       * ဒီပုံစံကိုလည်း လက်ခံ:
+       *
+       * {
+       *   "1": ["https://.../ep1.mp4"],
+       *   "2": ["https://.../ep1.mp4"]
+       * }
+       */
+      const numericSeasonEntries = Object.entries(source)
+        .filter(([key, value]) => {
+          return /^\d{1,3}$/.test(String(key)) &&
+            Array.isArray(value);
+        });
+
+      if (numericSeasonEntries.length) {
+        source = numericSeasonEntries.map(([key, value]) => ({
+          season: parseInt(key, 10),
+          episodes: value,
+        }));
+      }
+    }
+  }
+
+  /*
+   * URL string array တစ်ခုတည်းဆို Season 1 အဖြစ်ယူ။
+   *
+   * ဥပမာ:
+   * [
+   *   "https://example.com/ep1.mp4",
+   *   "https://example.com/ep2.mp4"
+   * ]
+   */
+  if (
+    Array.isArray(source) &&
+    source.length &&
+    source.every(value => typeof value === "string")
+  ) {
+    source = [
+      {
+        season: 1,
+        episodes: source,
+      },
+    ];
+  }
+
+  if (!Array.isArray(source)) {
+    return {
+      ok: false,
+      err: "Series JSON root က array ဖြစ်ရပါမယ်၊ သို့မဟုတ် seasons array ပါရပါမယ်။",
+      seasons: [],
+    };
+  }
+
+  if (!source.length) {
+    return {
+      ok: false,
+      err: "Season မရှိပါ။ အနည်းဆုံး Season တစ်ခု ထည့်ပါ။",
+      seasons: [],
+    };
+  }
+
+  if (source.length > 100) {
+    return {
+      ok: false,
+      err: "Season အရေအတွက် 100 ထက် မပိုရပါ။",
+      seasons: [],
+    };
+  }
+
+  const normalizedBySeason = new Map();
+  let totalEpisodes = 0;
+
+  for (
+    let seasonIndex = 0;
+    seasonIndex < source.length;
+    seasonIndex++
+  ) {
+    const seasonRow = source[seasonIndex];
+
+    if (
+      !seasonRow ||
+      typeof seasonRow !== "object" ||
+      Array.isArray(seasonRow)
+    ) {
+      return {
+        ok: false,
+        err: `Season ${seasonIndex + 1} format မှားနေပါတယ်။`,
+        seasons: [],
+      };
+    }
+
+    let seasonNumber = parseInt(
+      seasonRow.season ??
+      seasonRow.season_number ??
+      seasonRow.s ??
+      (seasonIndex + 1),
+      10
+    );
+
+    if (
+      !Number.isFinite(seasonNumber) ||
+      seasonNumber < 1 ||
+      seasonNumber > 100
+    ) {
+      seasonNumber = seasonIndex + 1;
+    }
+
+    let episodeSource =
+      seasonRow.episodes ??
+      seasonRow.episode ??
+      seasonRow.eps ??
+      seasonRow.items;
+
+    /*
+     * Season object ထဲ video URL တိုက်ရိုက်ပါရင်
+     * episode တစ်ခုအဖြစ် ပြောင်းပေးမယ်။
+     */
+    if (
+      !Array.isArray(episodeSource) &&
+      (
+        seasonRow.video_url ||
+        seasonRow.video ||
+        seasonRow.url ||
+        seasonRow.link ||
+        seasonRow.src
+      )
+    ) {
+      episodeSource = [seasonRow];
+    }
+
+    if (!Array.isArray(episodeSource)) {
+      return {
+        ok: false,
+        err: `Season ${seasonNumber} မှာ episodes array မရှိပါ။`,
+        seasons: [],
+      };
+    }
+
+    if (!episodeSource.length) {
+      return {
+        ok: false,
+        err: `Season ${seasonNumber} မှာ Episode မရှိပါ။`,
+        seasons: [],
+      };
+    }
+
+    if (episodeSource.length > 1000) {
+      return {
+        ok: false,
+        err: `Season ${seasonNumber} မှာ Episode 1000 ထက် ပိုနေပါတယ်။`,
+        seasons: [],
+      };
+    }
+
+    if (!normalizedBySeason.has(seasonNumber)) {
+      normalizedBySeason.set(seasonNumber, []);
+    }
+
+    const normalizedEpisodes =
+      normalizedBySeason.get(seasonNumber);
+
+    const usedEpisodeNumbers = new Set(
+      normalizedEpisodes.map(episode => episode.ep)
+    );
+
+    for (
+      let episodeIndex = 0;
+      episodeIndex < episodeSource.length;
+      episodeIndex++
+    ) {
+      const episodeRow = episodeSource[episodeIndex];
+
+      let videoUrl = "";
+      let downloadUrl = "";
+      let episodeTitle = "";
+      let episodeNumber = episodeIndex + 1;
+
+      /*
+       * Episode ကို URL string အနေနဲ့ပေးထားရင်။
+       */
+      if (typeof episodeRow === "string") {
+        videoUrl = episodeRow.trim();
+      } else if (
+        episodeRow &&
+        typeof episodeRow === "object" &&
+        !Array.isArray(episodeRow)
+      ) {
+        videoUrl = String(
+          episodeRow.video_url ??
+          episodeRow.video ??
+          episodeRow.url ??
+          episodeRow.link ??
+          episodeRow.src ??
+          ""
+        ).trim();
+
+        downloadUrl = String(
+          episodeRow.download_url ??
+          episodeRow.download ??
+          episodeRow.dl ??
+          ""
+        ).trim();
+
+        episodeTitle = String(
+          episodeRow.title ??
+          episodeRow.name ??
+          episodeRow.label ??
+          ""
+        ).trim();
+
+        const requestedEpisodeNumber = parseInt(
+          episodeRow.ep ??
+          episodeRow.episode ??
+          episodeRow.episode_number ??
+          episodeRow.number ??
+          episodeRow.e ??
+          (episodeIndex + 1),
+          10
+        );
+
+        if (
+          Number.isFinite(requestedEpisodeNumber) &&
+          requestedEpisodeNumber >= 1 &&
+          requestedEpisodeNumber <= 10000
+        ) {
+          episodeNumber = requestedEpisodeNumber;
+        }
+      } else {
+        return {
+          ok: false,
+          err:
+            `Season ${seasonNumber}, Episode ${episodeIndex + 1} ` +
+            "format မှားနေပါတယ်။",
+          seasons: [],
+        };
+      }
+
+      videoUrl = videoUrl.slice(0, 1000);
+      downloadUrl = downloadUrl.slice(0, 1000);
+      episodeTitle = episodeTitle.slice(0, 200);
+
+      if (!videoUrl) {
+        return {
+          ok: false,
+          err:
+            `Season ${seasonNumber}, Episode ${episodeNumber} ` +
+            "မှာ Video URL မရှိပါ။",
+          seasons: [],
+        };
+      }
+
+      if (!isHttpUrl(videoUrl)) {
+        return {
+          ok: false,
+          err:
+            `Season ${seasonNumber}, Episode ${episodeNumber} ` +
+            "ရဲ့ Video URL မှားနေပါတယ်။",
+          seasons: [],
+        };
+      }
+
+      if (
+        downloadUrl &&
+        !isHttpUrl(downloadUrl)
+      ) {
+        return {
+          ok: false,
+          err:
+            `Season ${seasonNumber}, Episode ${episodeNumber} ` +
+            "ရဲ့ Download URL မှားနေပါတယ်။",
+          seasons: [],
+        };
+      }
+
+      /*
+       * Episode number ထပ်နေရင် နောက်လွတ်တဲ့ number ပေးမယ်။
+       */
+      if (usedEpisodeNumbers.has(episodeNumber)) {
+        let nextNumber = 1;
+
+        while (usedEpisodeNumbers.has(nextNumber)) {
+          nextNumber++;
+        }
+
+        episodeNumber = nextNumber;
+      }
+
+      usedEpisodeNumbers.add(episodeNumber);
+
+      normalizedEpisodes.push({
+        ep: episodeNumber,
+        title:
+          episodeTitle ||
+          `Episode ${episodeNumber}`,
+        video_url: videoUrl,
+        download_url: downloadUrl,
+      });
+
+      totalEpisodes++;
+
+      if (totalEpisodes > 3000) {
+        return {
+          ok: false,
+          err: "Series တစ်ခုမှာ Episode စုစုပေါင်း 3000 ထက် မပိုရပါ။",
+          seasons: [],
+        };
+      }
+    }
+  }
+
+  const seasons = [...normalizedBySeason.entries()]
+    .map(([season, episodes]) => {
+      episodes.sort((a, b) => a.ep - b.ep);
+
+      return {
+        season,
+        episodes,
+      };
+    })
+    .sort((a, b) => a.season - b.season);
+
+  if (!seasons.length || totalEpisodes < 1) {
+    return {
+      ok: false,
+      err: "အသုံးပြုနိုင်သော Episode link မရှိပါ။",
+      seasons: [],
+    };
+  }
+
+  return {
+    ok: true,
+    seasons,
+  };
+}
 
 /* ══════════════════════════════════════════════════
    Build signed streams for watchPage
@@ -5191,4 +5604,3 @@ export async function onRequest(context) {
     );
   }
 }
-
