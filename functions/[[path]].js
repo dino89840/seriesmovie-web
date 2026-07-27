@@ -3,11 +3,35 @@
 
 
 // ── Session / key constants ──
-const SESSION_HOURS    = 24 * 30;
-const COOKIE_NAME      = "__Host-cmflix_sess";
-const CSRF_COOKIE      = "__Host-cmflix_csrf";
+const SESSION_HOURS       = 24 * 30; // 720 hours = 30 days
+const COOKIE_NAME         = "__Host-cmflix_sess";
+const CSRF_COOKIE         = "__Host-cmflix_csrf";
 const MAX_DEVICES_PER_KEY = 2;
-const KEY_PREFIX       = "CM";
+const KEY_PREFIX          = "CM";
+
+/*
+ * Same Worker isolate ထဲမှာ session result ကို ခဏ cache ထားမယ်။
+ *
+ * အကျိုးကျေးဇူး:
+ * - Logged-in user request တိုင်း D1 session + key row ထပ်မဖတ်ရ
+ * - revoke/logout ပြီးနောက် အများဆုံး 45 seconds အတွင်း expire
+ *
+ * Security နဲ့ D1 saving ကြား balance အဖြစ် 45 seconds သတ်မှတ်ထားသည်။
+ */
+const AUTH_CACHE_TTL_MS  = 45 * 1000;
+const AUTH_CACHE_MAX     = 512;
+
+/*
+ * Existing device က login ထပ်ဝင်တိုင်း last_seen ရေးမနေဘဲ
+ * 6 hours ကျော်မှသာ keys row ပြန်ရေးမယ်။
+ */
+const DEVICE_TOUCH_INTERVAL_MS = 6 * 3600 * 1000;
+
+/*
+ * Maintenance status D1 read ကို isolate တစ်ခုအတွင်း
+ * 60 seconds တစ်ကြိမ်သာလုပ်မယ်။
+ */
+const MAINTENANCE_CACHE_TTL_MS = 60 * 1000;
 
 // ── Contact (Admin) ──
 const CONTACT_TELEGRAM = "iqowoq";          // @ မပါဘဲ username ပဲ
@@ -131,24 +155,121 @@ function tgKeyInfoText(k) {
 }
 
 // key ထုတ် (bot နဲ့ admin panel — logic တူ)
-async function tgCreateKeys(env, days, count, role, note) {
+async function createKeysBatch(
+  env,
+  days,
+  count,
+  role = "paid",
+  note = ""
+) {
   const now = Date.now();
+
+  const safeDays =
+    Math.max(
+      1,
+      Math.min(
+        3650,
+        parseInt(days || "1", 10) || 1
+      )
+    );
+
+  const safeCount =
+    Math.max(
+      1,
+      Math.min(
+        50,
+        parseInt(count || "1", 10) || 1
+      )
+    );
+
+  const safeRole =
+    role === "paid"
+      ? "paid"
+      : "trial";
+
+  const safeNote =
+    String(note || "").slice(0, 60);
+
   const created = [];
-  const d = Math.max(1, Math.min(3650, days));
-  const c = Math.max(1, Math.min(20, count));
-  for (let i = 0; i < c; i++) {
+  const statements = [];
+  const used = new Set();
+
+  for (
+    let index = 0;
+    index < safeCount;
+    index++
+  ) {
     let keyId = generateKey();
-    let guard = 0;
-    while (await getKey(env, keyId) && guard < 5) { keyId = generateKey(); guard++; }
-    await putKey(env, keyId, {
-      key: keyId, role: role || "paid", created_at: now,
-      expires_at: now + d * 24 * 3600 * 1000,
-      duration_label: `${d} Day${d > 1 ? "s" : ""}`,
-      devices: [], note: note || "via-bot", disabled: false,
-    });
+
+    /*
+     * Same batch အတွင်း duplicate ဖြစ်တာကို
+     * memory ထဲမှာပဲ စစ်မယ်။
+     */
+    while (used.has(keyId)) {
+      keyId = generateKey();
+    }
+
+    used.add(keyId);
     created.push(keyId);
+
+    statements.push(
+      db(env).prepare(
+        `INSERT INTO keys
+         (
+           key_id,
+           role,
+           created_at,
+           expires_at,
+           duration_label,
+           note,
+           disabled,
+           devices
+         )
+         VALUES (?,?,?,?,?,?,?,?)`
+      ).bind(
+        keyId,
+        safeRole,
+        now,
+        now +
+          safeDays *
+          24 *
+          3600 *
+          1000,
+        `${safeDays} Day${
+          safeDays > 1 ? "s" : ""
+        }`,
+        safeNote,
+        0,
+        "[]"
+      )
+    );
   }
+
+  await db(env).batch(statements);
+
   return created;
+}
+
+async function tgCreateKeys(
+  env,
+  days,
+  count,
+  role,
+  note
+) {
+  return createKeysBatch(
+    env,
+    Math.max(
+      1,
+      Math.min(3650, days)
+    ),
+    Math.max(
+      1,
+      Math.min(20, count)
+    ),
+    role || "paid",
+    note || "via-bot"
+  );
 }
 
 /* ══════════════════════════════════════════════════
@@ -505,11 +626,12 @@ async function setSetting(env, key, value) {
   ).bind(key, String(value), Date.now()).run();
 
   if (key === "maintenance") {
-    _maintenanceCache = {
-      value: String(value) === "1",
-      expiresAt: Date.now() + 30000,
-    };
-  }
+  _maintenanceCache = {
+    value: String(value) === "1",
+    expiresAt:
+      Date.now() + MAINTENANCE_CACHE_TTL_MS,
+  };
+}
 }
 
 let _maintenanceCache = {
@@ -525,15 +647,21 @@ async function isMaintenanceOn(env) {
   }
 
   try {
-    const value = (await getSetting(env, "maintenance")) === "1";
+    const value =
+      (await getSetting(env, "maintenance")) === "1";
 
     _maintenanceCache = {
       value,
-      expiresAt: now + 30000, // ၃၀ စက္ကန့်
+      expiresAt:
+        now + MAINTENANCE_CACHE_TTL_MS,
     };
 
     return value;
   } catch (_) {
+    /*
+     * D1 temporary error ဖြစ်ရင် နောက်ဆုံးသိထားတဲ့
+     * maintenance value ကိုပြန်သုံးမယ်။
+     */
     return _maintenanceCache.value;
   }
 }
@@ -967,6 +1095,25 @@ function parseActressNames(raw) {
     .slice(0, 10);
 }
 
+async function warmActressCaches(
+  env,
+  rawNames
+) {
+  const names =
+    Array.isArray(rawNames)
+      ? rawNames.slice(0, 10)
+      : parseActressNames(rawNames);
+
+  for (const name of names) {
+    /*
+     * lookupActress() ကိုယ်တိုင် D1 cache အရင်စစ်ပါတယ်။
+     * ဒီအပြင်မှာ getActressCache() ထပ်မခေါ်ပါ။
+     */
+    try {
+      await lookupActress(env, name);
+    } catch (_) {}
+  }
+}
 
 /* ══════════════════════════════════════════════════
    KEY STORAGE  (D1: table `keys`)
@@ -1015,14 +1162,29 @@ async function putKey(env, keyId, data) {
 }
 
 async function deleteKey(env, keyId) {
-  const k = await getKey(env, keyId);
-  const stmts = [];
-  if (k && Array.isArray(k.devices)) {
-    for (const d of k.devices) if (d.id) stmts.push(db(env).prepare("DELETE FROM kdev WHERE device_id=?").bind(d.id));
+  if (!keyId) {
+    return;
   }
-  stmts.push(db(env).prepare("DELETE FROM sessions WHERE key_id=?").bind(keyId));
-  stmts.push(db(env).prepare("DELETE FROM keys WHERE key_id=?").bind(keyId));
-  if (stmts.length) await db(env).batch(stmts);
+
+  authCacheDeleteByKey(keyId);
+
+  await db(env).batch([
+    db(env).prepare(
+      "DELETE FROM kdev WHERE key_id=?"
+    ).bind(keyId),
+
+    db(env).prepare(
+      "DELETE FROM sessions WHERE key_id=?"
+    ).bind(keyId),
+
+    db(env).prepare(
+      "DELETE FROM bookmarks WHERE key_id=?"
+    ).bind(keyId),
+
+    db(env).prepare(
+      "DELETE FROM keys WHERE key_id=?"
+    ).bind(keyId),
+  ]);
 }
 
 function isKeyExpired(k) {
@@ -1322,8 +1484,85 @@ async function isSessionRevoked(env, keyId, sid) {
   ).bind(keyId, sid, Date.now()).first();
   return row === null;
 }
+const _authCache = new Map();
+
+function authCacheKey(keyId, sid) {
+  return `${String(keyId || "")}:${String(sid || "")}`;
+}
+
+function authCacheGet(keyId, sid) {
+  const cacheKey = authCacheKey(keyId, sid);
+  const entry = _authCache.get(cacheKey);
+
+  if (!entry) {
+    return null;
+  }
+
+  if (Date.now() >= entry.expiresAt) {
+    _authCache.delete(cacheKey);
+    return null;
+  }
+
+  /*
+   * LRU ပုံစံနီးပါးဖြစ်စေရန် အသုံးပြုထားတဲ့ entry ကို
+   * Map အဆုံးကို ပြန်ရွှေ့မယ်။
+   */
+  _authCache.delete(cacheKey);
+  _authCache.set(cacheKey, entry);
+
+  return entry.user;
+}
+
+function authCacheSet(keyId, sid, user) {
+  const cacheKey = authCacheKey(keyId, sid);
+
+  if (_authCache.has(cacheKey)) {
+    _authCache.delete(cacheKey);
+  }
+
+  while (_authCache.size >= AUTH_CACHE_MAX) {
+    const firstKey =
+      _authCache.keys().next().value;
+
+    if (firstKey == null) {
+      break;
+    }
+
+    _authCache.delete(firstKey);
+  }
+
+  _authCache.set(cacheKey, {
+    user,
+    expiresAt:
+      Date.now() + AUTH_CACHE_TTL_MS,
+  });
+}
+
+function authCacheDelete(keyId, sid) {
+  _authCache.delete(
+    authCacheKey(keyId, sid)
+  );
+}
+
+function authCacheDeleteByKey(keyId) {
+  const prefix = `${String(keyId || "")}:`;
+
+  for (const cacheKey of _authCache.keys()) {
+    if (cacheKey.startsWith(prefix)) {
+      _authCache.delete(cacheKey);
+    }
+  }
+}
+
 async function revokeSession(env, keyId, sid) {
-  await db(env).prepare("DELETE FROM sessions WHERE key_id=? AND sid=?").bind(keyId, sid).run();
+  authCacheDelete(keyId, sid);
+
+  await db(env).prepare(
+    "DELETE FROM sessions WHERE key_id=? AND sid=?"
+  ).bind(
+    keyId,
+    sid
+  ).run();
 }
 
 /* ══════════════════════════════════════════════════
@@ -1337,43 +1576,169 @@ async function getCurrentUser(request, env) {
 }
 
 async function _getCurrentUserInner(request, env) {
-  if (!env.SESSION_SECRET) return null;
-  const token = getCookie(request, COOKIE_NAME);
-  if (!token) return null;
-  const session = await verifySessionToken(token, env.SESSION_SECRET);
-  if (!session) return null;
-
-  // ── device-short ကို admin/user မခွဲဘဲ အမြဲစစ် (admin cookie ခိုးခံရရင်လည်း device မတူရင် ပိတ်) ──
-  // ⬇️ D1 မထိခင် cookie/token level မှာ အရင်စစ် — မကိုက်ရင် ချက်ချင်း ပြန် (D1 read ချွေတာ)
-  const curDevice = (await deviceIdFrom(request, getCookie(request, "cmflix_duid"))).slice(0, 12);
-  if (!safeEqual(session.deviceShort, curDevice)) return null;
-
-  if (session.keyId === "__ADMIN__") {
-    // admin session ကိုလည်း sessions table မှာ မှတ်ထားတာမို့ — revoke လုပ်နိုင် / expiry စစ်နိုင်
-    if (await isSessionRevoked(env, "__ADMIN__", session.sid)) return null;
-    return { keyId: "__ADMIN__", role: "admin", expires_at: 0, isAdmin: true, sid: session.sid };
+  if (!env.SESSION_SECRET) {
+    return null;
   }
 
-  // ── D1 read ချွေတာ — key + session ကို batch တစ်ခါတည်း ဆွဲ (round-trip ၂ ခု → ၁ ခု) ──
-  let sessionRow, keyRow;
+  const token =
+    getCookie(request, COOKIE_NAME);
+
+  if (!token) {
+    return null;
+  }
+
+  const session = await verifySessionToken(
+    token,
+    env.SESSION_SECRET
+  );
+
+  if (!session) {
+    return null;
+  }
+
+  /*
+   * D1 မထိခင် device fingerprint ကို အရင်စစ်မယ်။
+   * Cookie ခိုးခံရပေမယ့် device မတူရင် ဒီနေရာမှာပဲပိတ်မယ်။
+   */
+  const curDevice = (
+    await deviceIdFrom(
+      request,
+      getCookie(request, "cmflix_duid")
+    )
+  ).slice(0, 12);
+
+  if (
+    !safeEqual(
+      session.deviceShort,
+      curDevice
+    )
+  ) {
+    return null;
+  }
+
+  /*
+   * Same isolate ထဲမှာ မကြာသေးခင်က validate လုပ်ပြီးသား
+   * session ဖြစ်ရင် D1 ကို ထပ်မဖတ်တော့ဘူး။
+   */
+  const cachedUser = authCacheGet(
+    session.keyId,
+    session.sid
+  );
+
+  if (cachedUser) {
+    /*
+     * Cached key သက်တမ်းကုန်သွားတာကို TTL မစောင့်ဘဲ
+     * request time မှာပါ စစ်မယ်။
+     */
+    if (
+      !cachedUser.isAdmin &&
+      isExpired(cachedUser)
+    ) {
+      authCacheDelete(
+        session.keyId,
+        session.sid
+      );
+
+      return null;
+    }
+
+    return cachedUser;
+  }
+
+  if (session.keyId === "__ADMIN__") {
+    if (
+      await isSessionRevoked(
+        env,
+        "__ADMIN__",
+        session.sid
+      )
+    ) {
+      return null;
+    }
+
+    const adminUser = {
+      keyId: "__ADMIN__",
+      role: "admin",
+      expires_at: 0,
+      isAdmin: true,
+      sid: session.sid,
+    };
+
+    authCacheSet(
+      "__ADMIN__",
+      session.sid,
+      adminUser
+    );
+
+    return adminUser;
+  }
+
+  let sessionRow = null;
+  let keyRow = null;
+
   try {
-    const [sRes, kRes] = await db(env).batch([
-      db(env).prepare(
-        "SELECT sid FROM sessions WHERE key_id=? AND sid=? AND (expires_at=0 OR expires_at>?)"
-      ).bind(session.keyId, session.sid, Date.now()),
-      db(env).prepare("SELECT * FROM keys WHERE key_id=?").bind(session.keyId),
-    ]);
-    sessionRow = (sRes.results && sRes.results[0]) ? sRes.results[0] : null;
-    keyRow = (kRes.results && kRes.results[0]) ? kRes.results[0] : null;
+    const [sRes, kRes] =
+      await db(env).batch([
+        db(env).prepare(
+          `SELECT sid
+           FROM sessions
+           WHERE key_id=?
+             AND sid=?
+             AND (expires_at=0 OR expires_at>?)`
+        ).bind(
+          session.keyId,
+          session.sid,
+          Date.now()
+        ),
+
+        db(env).prepare(
+          "SELECT * FROM keys WHERE key_id=?"
+        ).bind(session.keyId),
+      ]);
+
+    sessionRow =
+      sRes.results &&
+      sRes.results[0]
+        ? sRes.results[0]
+        : null;
+
+    keyRow =
+      kRes.results &&
+      kRes.results[0]
+        ? kRes.results[0]
+        : null;
   } catch (_) {
     return null;
   }
 
-  // session revoke ဖြစ်နေ (သို့) key ပျောက်နေရင် null
-  if (!sessionRow) return null;
-  const k = rowToKey(keyRow);
-  if (!k) return null;
-  return { ...k, keyId: session.keyId, isAdmin: false, sid: session.sid };
+  if (!sessionRow) {
+    return null;
+  }
+
+  const keyObject = rowToKey(keyRow);
+
+  if (!keyObject) {
+    return null;
+  }
+
+  const user = {
+    ...keyObject,
+    keyId: session.keyId,
+    isAdmin: false,
+    sid: session.sid,
+  };
+
+  if (isExpired(user)) {
+    return null;
+  }
+
+  authCacheSet(
+    session.keyId,
+    session.sid,
+    user
+  );
+
+  return user;
 }
 
 
@@ -1494,31 +1859,148 @@ async function verifyCsrf(request, form) {
 /* ══════════════════════════════════════════════════
    DEVICE BINDING (2-phone limit)  — D1: table `kdev`
    ══════════════════════════════════════════════════ */
-async function bindDeviceToKey(env, keyObj, keyId, deviceId, request, clientIp) {
-  keyObj.devices = Array.isArray(keyObj.devices) ? keyObj.devices : [];
-  const existing = keyObj.devices.find(d => d.id === deviceId);
+async function bindDeviceToKey(
+  env,
+  keyObj,
+  keyId,
+  deviceId,
+  request,
+  clientIp
+) {
+  keyObj.devices =
+    Array.isArray(keyObj.devices)
+      ? keyObj.devices
+      : [];
+
+  const now = Date.now();
+  const ipPrefix =
+    ipNetworkPrefix(clientIp);
+
+  const existing =
+    keyObj.devices.find(
+      device => device.id === deviceId
+    );
+
   if (existing) {
-    existing.last_seen = Date.now();
-    existing.ip = ipNetworkPrefix(clientIp);
-    await putKey(env, keyId, keyObj);
-    return { ok: true };
+    const previousSeen =
+      Number(existing.last_seen || 0);
+
+    const previousIp =
+      String(existing.ip || "");
+
+    /*
+     * Existing device က login ပြန်ဝင်တိုင်း
+     * keys row ကိုရေးမနေဘူး။
+     *
+     * 6 hours ကျော်သွားတာ သို့မဟုတ် IP prefix ပြောင်းသွားမှ
+     * last_seen/ip update လုပ်မယ်။
+     */
+    const shouldTouch =
+      now - previousSeen >=
+        DEVICE_TOUCH_INTERVAL_MS ||
+      previousIp !== ipPrefix;
+
+    if (shouldTouch) {
+      existing.last_seen = now;
+      existing.ip = ipPrefix;
+
+      await putKey(
+        env,
+        keyId,
+        keyObj
+      );
+
+      authCacheDeleteByKey(keyId);
+    }
+
+    return {
+      ok: true,
+      existing: true,
+    };
   }
-  if (keyObj.devices.length >= MAX_DEVICES_PER_KEY) {
-    return { ok: false, reason: `ဒီ Key ကို ဖုန်း ${MAX_DEVICES_PER_KEY} လုံး သုံးပြီးသားဖြစ်ပါတယ်။ Admin ထံ ဆက်သွယ်ပါ။` };
+
+  if (
+    keyObj.devices.length >=
+    MAX_DEVICES_PER_KEY
+  ) {
+    return {
+      ok: false,
+      reason:
+        `ဒီ Key ကို ဖုန်း ${MAX_DEVICES_PER_KEY} လုံး ` +
+        "သုံးပြီးသားဖြစ်ပါတယ်။ Admin ထံ ဆက်သွယ်ပါ။",
+    };
   }
+
   keyObj.devices.push({
     id: deviceId,
     label: shortDeviceLabel(request),
-    first_seen: Date.now(),
-    last_seen: Date.now(),
-    ip: ipNetworkPrefix(clientIp),
+    first_seen: now,
+    last_seen: now,
+    ip: ipPrefix,
   });
-  await putKey(env, keyId, keyObj);
-  await db(env).prepare(
-    `INSERT INTO kdev (device_id, key_id) VALUES (?,?)
-     ON CONFLICT(device_id) DO UPDATE SET key_id=excluded.key_id`
-  ).bind(deviceId, keyId).run();
-  return { ok: true };
+
+  /*
+   * New device အတွက် key row + kdev mapping ကို
+   * batch တစ်ခါတည်းလုပ်မယ်။
+   */
+  await db(env).batch([
+    db(env).prepare(
+      `INSERT INTO keys
+       (
+         key_id,
+         role,
+         created_at,
+         expires_at,
+         duration_label,
+         note,
+         disabled,
+         devices
+       )
+       VALUES (?,?,?,?,?,?,?,?)
+       ON CONFLICT(key_id) DO UPDATE SET
+         role=excluded.role,
+         created_at=excluded.created_at,
+         expires_at=excluded.expires_at,
+         duration_label=excluded.duration_label,
+         note=excluded.note,
+         disabled=excluded.disabled,
+         devices=excluded.devices`
+    ).bind(
+      keyId,
+      keyObj.role || "trial",
+      keyObj.created_at || 0,
+      keyObj.expires_at || 0,
+      String(
+        keyObj.duration_label || ""
+      ).slice(0, 40),
+      String(
+        keyObj.note || ""
+      ).slice(0, 60),
+      keyObj.disabled ? 1 : 0,
+      JSON.stringify(
+        keyObj.devices || []
+      )
+    ),
+
+    db(env).prepare(
+      `INSERT INTO kdev
+       (device_id, key_id)
+       VALUES (?,?)
+       ON CONFLICT(device_id)
+       DO UPDATE SET
+         key_id=excluded.key_id`
+    ).bind(
+      deviceId,
+      keyId
+    ),
+  ]);
+
+  authCacheDeleteByKey(keyId);
+
+  return {
+    ok: true,
+    existing: false,
+  };
 }
 
 /* ══════════════════════════════════════════════════
@@ -2413,20 +2895,31 @@ function watchPage(
     const seasonTabs = seasons.map((s, si) => `
       <button class="season-tab ${si === 0 ? "on" : ""}" data-s="${si}">Season ${s.season || (si + 1)}</button>`).join("");
     const epLists = seasons.map((s, si) => {
-      const eps = (s.episodes || []).map((e, ei) => {
-        const st = (streams.seasons?.[si]?.[ei]) || { video: "", dl: "" };
-        return `
-        <button class="ep-btn" data-s="${si}" data-e="${ei}"
-          data-video="${htmlEscape(st.video || "")}"
-          data-dl="${htmlEscape(st.dl || "")}"
-          data-title="${htmlEscape(e.title || ("Episode " + (e.ep || ei + 1)))}">
-          <span class="ep-no">${e.ep || ei + 1}</span>
-          <span class="ep-tt">${htmlEscape(e.title || ("Episode " + (e.ep || ei + 1)))}</span>
-          <span class="ep-play">▶</span>
-        </button>`;
-      }).join("");
-      return `<div class="ep-list ${si === 0 ? "on" : ""}" data-s="${si}">${eps || '<div class="empty">Episode မရှိသေးပါ</div>'}</div>`;
-    }).join("");
+      const eps =
+  (s.episodes || []).map((e, ei) => {
+    const episodeTitle =
+      e.title ||
+      `Episode ${e.ep || ei + 1}`;
+
+    return `
+    <button
+      class="ep-btn"
+      data-s="${si}"
+      data-e="${ei}"
+      data-title="${htmlEscape(episodeTitle)}"
+    >
+      <span class="ep-no">
+        ${e.ep || ei + 1}
+      </span>
+
+      <span class="ep-tt">
+        ${htmlEscape(episodeTitle)}
+      </span>
+
+      <span class="ep-play">▶</span>
+    </button>`;
+  }).join("");
+
 
     seriesNav = `
       <div class="seasons">
@@ -2749,6 +3242,23 @@ ${footer()}`;
   const script = `
 (function(){
   var GATED = ${gated ? "true" : "false"};
+
+  var ITEM_ID =
+    ${JSON.stringify(String(item.id || ""))};
+
+  var STREAM_LINK_CACHE_MS =
+    ${Math.max(
+      60000,
+      (STREAM_TTL_SEC - 60) * 1000
+    )};
+
+  /*
+   * Same episode ကို ထပ်နှိပ်ရင် API ကိုထပ်မခေါ်ဘဲ
+   * browser memory ထဲက signed links ကိုပြန်သုံးမယ်။
+   */
+  var episodeLinkCache =
+    Object.create(null);
+
   var v=document.getElementById('cmPlayer');
   var btnPlay=document.getElementById('btnPlay');
   var btnDl=document.getElementById('btnDl');
@@ -3467,16 +3977,172 @@ ${footer()}`;
       document.querySelectorAll('.ep-list').forEach(function(l){l.classList.toggle('on',l.dataset.s===s);});
     });
   });
-  document.querySelectorAll('.ep-btn').forEach(function(b){
-    b.addEventListener('click',function(){
-      if(GATED){ gateMsg(); return; }
-      document.querySelectorAll('.ep-btn').forEach(function(x){x.classList.remove('playing');});
-      b.classList.add('playing');
-      setSource(b.dataset.video, b.dataset.dl, b.dataset.title);
-      setTimeout(tryPlay,120);
-      document.querySelector('.player-box').scrollIntoView({behavior:'smooth',block:'center'});
+  function getEpisodeLinks(
+  seasonIndex,
+  episodeIndex
+) {
+  var cacheKey =
+    String(seasonIndex) +
+    ':' +
+    String(episodeIndex);
+
+  var cached =
+    episodeLinkCache[cacheKey];
+
+  if (
+    cached &&
+    Date.now() - cached.savedAt <
+      STREAM_LINK_CACHE_MS
+  ) {
+    return Promise.resolve(cached);
+  }
+
+  var apiUrl =
+    '/api/stream-links/' +
+    encodeURIComponent(ITEM_ID) +
+    '?s=' +
+    encodeURIComponent(seasonIndex) +
+    '&e=' +
+    encodeURIComponent(episodeIndex);
+
+  return fetch(apiUrl, {
+    method: 'GET',
+    credentials: 'same-origin',
+    cache: 'no-store',
+    headers: {
+      'Accept': 'application/json'
+    }
+  })
+    .then(function(response) {
+      return response
+        .json()
+        .catch(function() {
+          return {
+            ok: false,
+            error: 'Invalid response'
+          };
+        })
+        .then(function(data) {
+          if (!response.ok || !data.ok) {
+            throw new Error(
+              data.error ||
+              'Stream link ထုတ်လို့မရပါ'
+            );
+          }
+
+          return data;
+        });
+    })
+    .then(function(data) {
+      var result = {
+        video: data.video || '',
+        dl: data.dl || data.video || '',
+        savedAt: Date.now()
+      };
+
+      episodeLinkCache[cacheKey] =
+        result;
+
+      return result;
     });
+}
+
+document
+  .querySelectorAll('.ep-btn')
+  .forEach(function(b) {
+    b.addEventListener(
+      'click',
+      function() {
+        if (GATED) {
+          gateMsg();
+          return;
+        }
+
+        var seasonIndex =
+          parseInt(b.dataset.s, 10);
+
+        var episodeIndex =
+          parseInt(b.dataset.e, 10);
+
+        if (
+          !Number.isInteger(seasonIndex) ||
+          !Number.isInteger(episodeIndex) ||
+          seasonIndex < 0 ||
+          episodeIndex < 0
+        ) {
+          showToast(
+            'Episode အချက်အလက် မှားနေပါတယ်'
+          );
+
+          return;
+        }
+
+        document
+          .querySelectorAll('.ep-btn')
+          .forEach(function(x) {
+            x.classList.remove('playing');
+          });
+
+        b.classList.add('playing');
+        b.disabled = true;
+
+        keepLoadingOnTop();
+        showLoading();
+
+        getEpisodeLinks(
+          seasonIndex,
+          episodeIndex
+        )
+          .then(function(links) {
+            if (!links.video) {
+              throw new Error(
+                'Episode link မရှိသေးပါ'
+              );
+            }
+
+            setSource(
+              links.video,
+              links.dl,
+              b.dataset.title || ''
+            );
+
+            setTimeout(
+              tryPlay,
+              120
+            );
+
+            var playerBox =
+              document.querySelector(
+                '.player-box'
+              );
+
+            if (playerBox) {
+              playerBox.scrollIntoView({
+                behavior: 'smooth',
+                block: 'center'
+              });
+            }
+          })
+          .catch(function(error) {
+            cancelLoading();
+            b.classList.remove('playing');
+
+            showToast(
+              String(
+                error &&
+                error.message
+                  ? error.message
+                  : 'Episode ဖွင့်လို့မရပါ'
+              )
+            );
+          })
+          .finally(function() {
+            b.disabled = false;
+          });
+      }
+    );
   });
+
   ` : ``}
 
   // ── Bookmark toggle ──
@@ -4797,31 +5463,76 @@ function sanitizeSeasons(rawInput) {
 /* ══════════════════════════════════════════════════
    Build signed streams for watchPage
    ══════════════════════════════════════════════════ */
-async function buildStreams(env, item, gated, user) {
+async function buildStreams(
+  env,
+  item,
+  gated,
+  user
+) {
   if (gated) {
-    if (item.type === "series") return { seasons: [] };
-    return { single: { video: "", dl: "" } };
-  }
-  const u = await userStreamTag(user);
-  if (item.type === "series") {
-    const seasons = Array.isArray(item.seasons) ? item.seasons : [];
-    const out = [];
-    for (let si = 0; si < seasons.length; si++) {
-      const eps = seasons[si].episodes || [];
-      const row = [];
-      for (let ei = 0; ei < eps.length; ei++) {
-        const video = await makeStreamUrl(env, item.id, { s: si, e: ei, download: false, u });
-        const dl = await makeStreamUrl(env, item.id, { s: si, e: ei, download: true, u });
-        row.push({ video, dl });
-      }
-      out.push(row);
+    if (item.type === "series") {
+      return {
+        seasons: [],
+        lazy: true,
+      };
     }
-    return { seasons: out };
-  } else {
-    const video = await makeStreamUrl(env, item.id, { s: -1, e: -1, download: false, u });
-    const dl = await makeStreamUrl(env, item.id, { s: -1, e: -1, download: true, u });
-    return { single: { video, dl } };
+
+    return {
+      single: {
+        video: "",
+        dl: "",
+      },
+    };
   }
+
+  /*
+   * Series episode URLs ကို page load မှာ မထုတ်တော့ဘူး။
+   * Episode button နှိပ်မှ /api/stream-links/... ကနေ ထုတ်မယ်။
+   */
+  if (item.type === "series") {
+    return {
+      seasons: [],
+      lazy: true,
+    };
+  }
+
+  const u = await userStreamTag(user);
+
+  /*
+   * Single movie အတွက် signature နှစ်ခုကို
+   * sequential မလုပ်ဘဲ parallel ထုတ်မယ်။
+   */
+  const [video, dl] =
+    await Promise.all([
+      makeStreamUrl(
+        env,
+        item.id,
+        {
+          s: -1,
+          e: -1,
+          download: false,
+          u,
+        }
+      ),
+
+      makeStreamUrl(
+        env,
+        item.id,
+        {
+          s: -1,
+          e: -1,
+          download: true,
+          u,
+        }
+      ),
+    ]);
+
+  return {
+    single: {
+      video,
+      dl,
+    },
+  };
 }
 
 function resolveRealUrl(item, s, e, download) {
@@ -5005,6 +5716,214 @@ if (path === "/search" && method === "GET") {
     request,
     120,
     () => buildSearchPage(null)
+  );
+}
+// ───────────── LAZY STREAM LINKS FOR SERIES ─────────────
+if (
+  path.startsWith("/api/stream-links/") &&
+  method === "GET"
+) {
+  let id = "";
+
+  try {
+    id = decodeURIComponent(
+      path
+        .slice(
+          "/api/stream-links/".length
+        )
+        .split("/")[0]
+    );
+  } catch (_) {
+    return new Response(
+      JSON.stringify({
+        ok: false,
+        error: "Invalid item id",
+      }),
+      {
+        status: 400,
+        headers: {
+          "content-type":
+            "application/json; charset=utf-8",
+          "cache-control": "no-store",
+        },
+      }
+    );
+  }
+
+  const user =
+    await getCurrentUser(request, env);
+
+  if (!user || isExpired(user)) {
+    return new Response(
+      JSON.stringify({
+        ok: false,
+        error: "Login required",
+      }),
+      {
+        status: 403,
+        headers: {
+          "content-type":
+            "application/json; charset=utf-8",
+          "cache-control": "no-store",
+        },
+      }
+    );
+  }
+
+  const seasonIndex = parseInt(
+    url.searchParams.get("s") || "-1",
+    10
+  );
+
+  const episodeIndex = parseInt(
+    url.searchParams.get("e") || "-1",
+    10
+  );
+
+  if (
+    !Number.isInteger(seasonIndex) ||
+    !Number.isInteger(episodeIndex) ||
+    seasonIndex < 0 ||
+    episodeIndex < 0
+  ) {
+    return new Response(
+      JSON.stringify({
+        ok: false,
+        error: "Invalid episode",
+      }),
+      {
+        status: 400,
+        headers: {
+          "content-type":
+            "application/json; charset=utf-8",
+          "cache-control": "no-store",
+        },
+      }
+    );
+  }
+
+  const item =
+    await getItem(env, id);
+
+  if (
+    !item ||
+    item.type !== "series" ||
+    (
+      item.published !== 1 &&
+      !user.isAdmin
+    )
+  ) {
+    return new Response(
+      JSON.stringify({
+        ok: false,
+        error: "Series not found",
+      }),
+      {
+        status: 404,
+        headers: {
+          "content-type":
+            "application/json; charset=utf-8",
+          "cache-control": "no-store",
+        },
+      }
+    );
+  }
+
+  const episode =
+    item.seasons?.[seasonIndex]
+      ?.episodes?.[episodeIndex];
+
+  if (!episode) {
+    return new Response(
+      JSON.stringify({
+        ok: false,
+        error: "Episode not found",
+      }),
+      {
+        status: 404,
+        headers: {
+          "content-type":
+            "application/json; charset=utf-8",
+          "cache-control": "no-store",
+        },
+      }
+    );
+  }
+
+  const realVideo =
+    resolveRealUrl(
+      item,
+      seasonIndex,
+      episodeIndex,
+      false
+    );
+
+  if (!isHttpUrl(realVideo)) {
+    return new Response(
+      JSON.stringify({
+        ok: false,
+        error: "Episode source missing",
+      }),
+      {
+        status: 404,
+        headers: {
+          "content-type":
+            "application/json; charset=utf-8",
+          "cache-control": "no-store",
+        },
+      }
+    );
+  }
+
+  const userTag =
+    await userStreamTag(user);
+
+  /*
+   * Playback URL က proxy pool ဆီဆက်သွားမယ်။
+   * Download URL က မူရင်း design အတိုင်း main Worker ဆီသွားမယ်။
+   */
+  const [video, dl] =
+    await Promise.all([
+      makeStreamUrl(
+        env,
+        item.id,
+        {
+          s: seasonIndex,
+          e: episodeIndex,
+          download: false,
+          u: userTag,
+        }
+      ),
+
+      makeStreamUrl(
+        env,
+        item.id,
+        {
+          s: seasonIndex,
+          e: episodeIndex,
+          download: true,
+          u: userTag,
+        }
+      ),
+    ]);
+
+  return new Response(
+    JSON.stringify({
+      ok: true,
+      video,
+      dl,
+      expires_in: STREAM_TTL_SEC,
+    }),
+    {
+      headers: {
+        "content-type":
+          "application/json; charset=utf-8",
+        "cache-control":
+          "private, no-store",
+        "X-Content-Type-Options":
+          "nosniff",
+      },
+    }
   );
 }
 
@@ -5461,30 +6380,39 @@ return new Response(
       );
     }
 
-    if (action === "remove") {
-      await removeBookmark(env, user.keyId, itemId);
-    } else {
-      await addBookmark(env, user.keyId, itemId);
-    }
+    let nowOn = false;
 
-    const nowOn = await isBookmarked(
-      env,
-      user.keyId,
-      itemId
-    );
+if (action === "remove") {
+  await removeBookmark(
+    env,
+    user.keyId,
+    itemId
+  );
 
-    return new Response(
-      JSON.stringify({
-        ok: true,
-        bookmarked: nowOn,
-      }),
-      {
-        headers: {
-          "content-type": "application/json; charset=utf-8",
-          "cache-control": "no-store",
-        },
-      }
-    );
+  nowOn = false;
+} else {
+  await addBookmark(
+    env,
+    user.keyId,
+    itemId
+  );
+
+  nowOn = true;
+}
+
+return new Response(
+  JSON.stringify({
+    ok: true,
+    bookmarked: nowOn,
+  }),
+  {
+    headers: {
+      "content-type":
+        "application/json; charset=utf-8",
+      "cache-control": "no-store",
+    },
+  }
+);
   }
 
   // ───────────── BOOKMARK CLEAR ALL ─────────────
@@ -5976,24 +6904,41 @@ if (path.startsWith("/actress/") && method === "GET") {
     if (path === "/admin/create" && method === "POST") {
       const form = await parseForm(request);
       if (!(await verifyCsrf(request, form))) return new Response("CSRF failed", { status: 403 });
-      const days = Math.max(1, Math.min(3650, parseInt(form.days || "1", 10)));
-      const role = form.role === "paid" ? "paid" : "trial";
-      const count = Math.max(1, Math.min(50, parseInt(form.count || "1", 10)));
-      const note = String(form.note || "").slice(0, 60);
-      const now = Date.now();
-      const created = [];
-      for (let i = 0; i < count; i++) {
-        let keyId = generateKey();
-        let guard = 0;
-        while (await getKey(env, keyId) && guard < 5) { keyId = generateKey(); guard++; }
-        await putKey(env, keyId, {
-          key: keyId, role, created_at: now,
-          expires_at: now + days * 24 * 3600 * 1000,
-          duration_label: `${days} Day${days > 1 ? "s" : ""}`,
-          devices: [], note, disabled: false,
-        });
-        created.push(keyId);
-      }
+      const days =
+  Math.max(
+    1,
+    Math.min(
+      3650,
+      parseInt(form.days || "1", 10) || 1
+    )
+  );
+
+const role =
+  form.role === "paid"
+    ? "paid"
+    : "trial";
+
+const count =
+  Math.max(
+    1,
+    Math.min(
+      50,
+      parseInt(form.count || "1", 10) || 1
+    )
+  );
+
+const note =
+  String(form.note || "").slice(0, 60);
+
+const created =
+  await createKeysBatch(
+    env,
+    days,
+    count,
+    role,
+    note
+  );
+
       const dest = new URL("/admin", url);
       if (count === 1) dest.searchParams.set("newkey", created[0]);
       else dest.searchParams.set("info", `${count} keys created`);
@@ -6021,15 +6966,31 @@ if (path.startsWith("/actress/") && method === "GET") {
       const form = await parseForm(request);
       if (!(await verifyCsrf(request, form))) return new Response("CSRF failed", { status: 403 });
       const keyId = normalizeKey(form.key);
-      const k = await getKey(env, keyId);
-      if (k) {
-        const stmts = [];
-        if (Array.isArray(k.devices)) for (const d of k.devices) if (d.id) stmts.push(db(env).prepare("DELETE FROM kdev WHERE device_id=?").bind(d.id));
-        stmts.push(db(env).prepare("DELETE FROM sessions WHERE key_id=?").bind(keyId));
-        if (stmts.length) await db(env).batch(stmts);
-        k.devices = [];
-        await putKey(env, keyId, k);
-      }
+      const k =
+  await getKey(env, keyId);
+
+if (k) {
+  k.devices = [];
+
+  authCacheDeleteByKey(keyId);
+
+  await db(env).batch([
+    db(env).prepare(
+      "DELETE FROM kdev WHERE key_id=?"
+    ).bind(keyId),
+
+    db(env).prepare(
+      "DELETE FROM sessions WHERE key_id=?"
+    ).bind(keyId),
+
+    db(env).prepare(
+      `UPDATE keys
+       SET devices='[]'
+       WHERE key_id=?`
+    ).bind(keyId),
+  ]);
+}
+
       return Response.redirect(new URL("/admin", url).toString(), 302);
     }
 
