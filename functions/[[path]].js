@@ -3974,10 +3974,27 @@ ${footer()}`;
   }
 
   function setSource(video, dl, title){
-    cur.video=video||''; cur.dl=dl||video||''; cur.title=title||'';
+    cur.video=video||'';
+    cur.dl=dl||video||'';
+    cur.title=title||'';
+
+    /*
+     * Series မှာ Episode အသစ်ပြောင်းတိုင်း Movie စဖွင့်ချိန်လို
+     * နောက်ခံ Cover ကို အရင်ပြန်ပြမယ်။
+     *
+     * Video frame တကယ်ပေါ်လာမှ
+     * finishLoadingAfterPaint() က cover ကို ပြန်ဖျောက်မယ်။
+     */
+    if(coverEl){
+      coverEl.classList.remove('hide');
+    }
+
     revealPlayer();
     applySource(cur.video);
-    if(nowEl && title){ nowEl.textContent='▶ Now playing: '+title; }
+
+    if(nowEl && title){
+      nowEl.textContent='▶ Now playing: '+title;
+    }
   }
 
   ${item.type !== "series" ? `
@@ -4160,6 +4177,17 @@ document
         b.classList.add('playing');
         b.disabled = true;
 
+        /*
+         * Movie စဖွင့်ချိန်လို Series Episode နှိပ်တာနဲ့
+         * နောက်ခံ Cover ကို အရင်ပြန်ပေါ်စေမယ်။
+         *
+         * Episode link API ကနေ ယူနေတဲ့အချိန်မှာ
+         * Cover အပေါ် Loading အဝိုင်း လည်နေပါမယ်။
+         */
+        if(coverEl){
+          coverEl.classList.remove('hide');
+        }
+
         keepLoadingOnTop();
         showLoading();
 
@@ -4174,6 +4202,10 @@ document
               );
             }
 
+            /*
+             * Movie မှာအသုံးပြုတဲ့ source/loading လုပ်ဆောင်ချက်နဲ့
+             * တူညီတဲ့ setSource() ကို အသုံးပြုမယ်။
+             */
             setSource(
               links.video,
               links.dl,
@@ -4200,6 +4232,14 @@ document
           .catch(function(error) {
             cancelLoading();
             b.classList.remove('playing');
+
+            /*
+             * Episode link ယူမရရင် loading ဖျောက်ပေမယ့်
+             * နောက်ခံ Cover ကို ဆက်ပြထားမယ်။
+             */
+            if(coverEl){
+              coverEl.classList.remove('hide');
+            }
 
             showToast(
               String(
