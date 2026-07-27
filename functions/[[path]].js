@@ -2757,16 +2757,24 @@ ${footer()}`;
   var loadEl=document.getElementById('cmLoading');
   var cur={video:'',dl:'',title:''};
 
-  // ── Video frame တကယ် screen ပေါ်ရောက်မှ spinner ဖျောက်ရန် ──
-  var loadingSince = 0;
-  var loadingHideTimer = null;
-  var loadingCycle = 0;
+  // ── Video loading / seek spinner controller ──
+  var loadingSince=0;
+  var loadingHideTimer=null;
+  var loadingPaintTimer=null;
+  var loadingCycle=0;
+  var pendingFinishCycle=-1;
 
   /*
-   * Spinner အနည်းဆုံး မြင်ရမယ့်အချိန်။
-   * Flash လို ခဏလေးပေါ်ပြီး ပျောက်တာ မဖြစ်အောင် 450ms ထားတယ်။
+   * Spinner ခဏလေး flash ဖြစ်ပြီးပျောက်တာ မဖြစ်အောင်
+   * အနည်းဆုံး 350ms ပြမယ်။
    */
-  var MIN_LOADING_MS = 450;
+  var MIN_LOADING_MS=350;
+
+  /*
+   * requestVideoFrameCallback မအလုပ်လုပ်တဲ့ browser တွေအတွက်
+   * fallback စောင့်ချိန်။
+   */
+  var PAINT_FALLBACK_MS=900;
 
   function getPlayerBox(){
     return document.querySelector('.player-box');
@@ -2776,6 +2784,10 @@ ${footer()}`;
     try{
       var box=getPlayerBox();
 
+      /*
+       * Plyr က video ကို wrapper ထဲရွှေ့နိုင်တာကြောင့်
+       * spinner ကို player-box ရဲ့ နောက်ဆုံး child အဖြစ်ထားမယ်။
+       */
       if(box && loadEl && loadEl.parentNode !== box){
         box.appendChild(loadEl);
       }
@@ -2786,19 +2798,40 @@ ${footer()}`;
     }catch(_){}
   }
 
-  function showLoading(){
-    if(!loadEl) return;
-
+  function clearLoadingTimers(){
     if(loadingHideTimer){
       clearTimeout(loadingHideTimer);
       loadingHideTimer=null;
     }
 
+    if(loadingPaintTimer){
+      clearTimeout(loadingPaintTimer);
+      loadingPaintTimer=null;
+    }
+  }
+
+  function showLoading(){
+    if(!loadEl) return;
+
+    clearLoadingTimers();
+
+    /*
+     * waiting / seeking / stalled အသစ်ဖြစ်တိုင်း
+     * အရင် frame callback ကို invalid လုပ်မယ်။
+     */
     loadingCycle++;
-    loadingSince=Date.now();
+    pendingFinishCycle=-1;
+
+    /*
+     * Spinner မပေါ်သေးတဲ့အချိန်မှ စတင်ချိန် အသစ်ယူမယ်။
+     * event တစ်ခုချင်းစီကြောင့် loadingSince ကို
+     * အမြဲ reset မလုပ်တော့ပါ။
+     */
+    if(!loadEl.classList.contains('show')){
+      loadingSince=Date.now();
+    }
 
     keepLoadingOnTop();
-
     loadEl.classList.add('show');
 
     var box=getPlayerBox();
@@ -2808,19 +2841,14 @@ ${footer()}`;
   }
 
   /*
-   * Error ဖြစ်တာ၊ play() reject ဖြစ်တာမျိုးမှာ
-   * frame မစောင့်တော့ဘဲ spinner ကို ချက်ချင်းဖျောက်မယ်။
-   *
-   * Poster cover ကိုတော့ ဒီ function မှာ မဖျောက်ပါ။
-   * ဒါမှ ပထမဆုံး video load မအောင်မြင်ရင် black screen မဖြစ်ဘူး။
+   * Error / play reject / video ended ဖြစ်ရင်
+   * spinner ကို ချက်ချင်းဖျောက်မယ်။
    */
   function cancelLoading(){
     loadingCycle++;
+    pendingFinishCycle=-1;
 
-    if(loadingHideTimer){
-      clearTimeout(loadingHideTimer);
-      loadingHideTimer=null;
-    }
+    clearLoadingTimers();
 
     if(loadEl){
       loadEl.classList.remove('show');
@@ -2832,27 +2860,96 @@ ${footer()}`;
     }
   }
 
+  function removeLoadingOverlay(cycle){
+    if(cycle !== loadingCycle){
+      return;
+    }
+
+    if(!v || v.readyState < 2){
+      pendingFinishCycle=-1;
+      return;
+    }
+
+    /*
+     * Seek မပြီးသေးရင် မဖျောက်သေးဘူး။
+     * seeked / playing / canplay event ပြန်လာရင် ထပ်စစ်မယ်။
+     */
+    if(v.seeking){
+      pendingFinishCycle=-1;
+      return;
+    }
+
+    if(loadEl){
+      loadEl.classList.remove('show');
+    }
+
+    var box=getPlayerBox();
+    if(box){
+      box.classList.remove('is-loading');
+    }
+
+    /*
+     * ပထမဆုံး video frame အသင့်ဖြစ်ပြီဆိုမှ
+     * poster cover ကို ဖျောက်မယ်။
+     */
+    if(coverEl){
+      coverEl.classList.add('hide');
+    }
+
+    clearLoadingTimers();
+    pendingFinishCycle=-1;
+  }
+
   /*
-   * Browser က video frame တကယ် render လုပ်ပြီးတဲ့နောက်
-   * spinner နဲ့ poster cover ကို ဖျောက်မယ်။
+   * Video frame အသင့်ဖြစ်ပြီးနောက် spinner ဖျောက်မယ်။
+   *
+   * requestVideoFrameCallback ရှိရင် actual frame ကိုစောင့်မယ်။
+   * callback မလာတဲ့ browser တွေမှာ fallback timer နဲ့ဖျောက်မယ်။
    */
   function finishLoadingAfterPaint(){
     if(!loadEl || !loadEl.classList.contains('show')){
       return;
     }
 
+    if(!v || v.readyState < 2){
+      return;
+    }
+
     var cycle=loadingCycle;
 
-    function finish(){
-      /*
-       * finish စောင့်နေစဉ် waiting/loadstart အသစ်ဖြစ်သွားရင်
-       * အဟောင်း callback က spinner ကို မဖျောက်ရ။
-       */
-      if(cycle !== loadingCycle){
+    /*
+     * timeupdate အကြိမ်ကြိမ်လာရင် hide timer ကို
+     * ထပ်ခါထပ်ခါ reset မလုပ်စေရန်။
+     */
+    if(pendingFinishCycle === cycle){
+      return;
+    }
+
+    pendingFinishCycle=cycle;
+
+    var completed=false;
+
+    function frameReady(){
+      if(completed){
         return;
       }
 
-      if(!v || v.readyState < 2){
+      completed=true;
+
+      if(loadingPaintTimer){
+        clearTimeout(loadingPaintTimer);
+        loadingPaintTimer=null;
+      }
+
+      if(cycle !== loadingCycle){
+        if(pendingFinishCycle === cycle){
+          pendingFinishCycle=-1;
+        }
+        return;
+      }
+
+      if(!v || v.readyState < 2 || v.seeking){
+        pendingFinishCycle=-1;
         return;
       }
 
@@ -2864,61 +2961,39 @@ ${footer()}`;
       }
 
       loadingHideTimer=setTimeout(function(){
-        if(cycle !== loadingCycle){
-          return;
-        }
-
-        if(loadEl){
-          loadEl.classList.remove('show');
-        }
-
-        var box=getPlayerBox();
-        if(box){
-          box.classList.remove('is-loading');
-        }
-
-        /*
-         * Poster ကို video frame တကယ်ပေါ်ပြီးမှ ဖျောက်မယ်။
-         * ပထမဆုံး cold load မှာ black screen မဖြစ်တော့ဘူး။
-         */
-        if(coverEl){
-          coverEl.classList.add('hide');
-        }
-
-        loadingHideTimer=null;
+        removeLoadingOverlay(cycle);
       },wait);
     }
 
     /*
-     * requestVideoFrameCallback ရှိတဲ့ browser တွေမှာ
-     * decoded frame တကယ် screen ပေါ်တက်တဲ့အချိန်ကို စောင့်မယ်။
+     * callback မလာဘဲ spinner မပျောက်တော့တာကို
+     * ကာကွယ်ရန် fallback timer အမြဲထားမယ်။
      */
+    loadingPaintTimer=setTimeout(function(){
+      frameReady();
+    },PAINT_FALLBACK_MS);
+
     if(
-      v &&
       typeof v.requestVideoFrameCallback === 'function'
     ){
       try{
         v.requestVideoFrameCallback(function(){
-          finish();
+          frameReady();
         });
         return;
       }catch(_){}
     }
 
-    /*
-     * Browser အဟောင်းတွေမှာ animation frame နှစ်ကြိမ်စောင့်ပြီးမှ
-     * spinner ဖျောက်မယ်။
-     */
     requestAnimationFrame(function(){
       requestAnimationFrame(function(){
-        finish();
+        frameReady();
       });
     });
   }
 
   /*
-   * မူရင်း code ထဲက hideLoading(true/false) ခေါ်ထားတာတွေ
-   * ဆက်အလုပ်လုပ်နိုင်ရန် compatibility wrapper ထားတယ်။
+   * မူရင်းအောက်ပိုင်းမှာ hideLoading(true/false)
+   * ခေါ်ထားတာတွေ ဆက်အလုပ်လုပ်ရန်။
    */
   function hideLoading(force){
     if(force){
@@ -3073,7 +3148,8 @@ ${footer()}`;
       });
 
       /*
-       * Network/source loading ဖြစ်တိုင်း spinner ပြ။
+       * Source စ load လုပ်ချိန်၊ internet စောင့်ချိန်၊
+       * seek လုပ်ချိန်မှာ spinner ပြမယ်။
        */
       player.on('loadstart',function(){
         keepLoadingOnTop();
@@ -3096,29 +3172,61 @@ ${footer()}`;
       });
 
       /*
-       * playing ရောက်ပြီး actual frame render ဖြစ်မှ spinner ဖျောက်။
+       * Playback ပြန်စတာ၊ seek ပြီးတာ၊
+       * data/frame အသင့်ဖြစ်တာနဲ့ spinner ဖျောက်ဖို့စစ်မယ်။
        */
-      player.on('playing',firstFrameReady);
+      player.on('playing',function(){
+        finishLoadingAfterPaint();
+      });
 
-      /*
-       * timeupdate ကို ချက်ချင်းဖျောက်ဖို့ မသုံးတော့ဘူး။
-       * currentTime တကယ်ရွေ့နေမှ rendered-frame check လုပ်မယ်။
-       */
-      player.on('timeupdate',videoStartedProgressing);
+      player.on('canplay',function(){
+        finishLoadingAfterPaint();
+      });
 
-      /*
-       * loadeddata မှာ spinner မဖျောက်ရ။
-       * loadeddata က frame screen ပေါ်တက်ပြီးပြီလို့ မဆိုလိုပါ။
-       */
+      player.on('canplaythrough',function(){
+        finishLoadingAfterPaint();
+      });
+
       player.on('loadeddata',function(){
-        keepLoadingOnTop();
+        if(v && v.readyState >= 2){
+          finishLoadingAfterPaint();
+        }
+      });
+
+      player.on('seeked',function(){
+        finishLoadingAfterPaint();
       });
 
       /*
-       * Seek ပြီးသွားရင် seeked frame render ကို စောင့်ပြီးဖျောက်။
+       * Browser တချို့မှာ seeked/playing event နောက်ကျတာအတွက်
+       * currentTime ပြန်ရွေ့တာနဲ့ ထပ်စစ်မယ်။
        */
-      player.on('seeked',function(){
-        finishLoadingAfterPaint();
+      player.on('timeupdate',function(){
+        if(
+          v &&
+          v.readyState >= 2 &&
+          !v.seeking
+        ){
+          finishLoadingAfterPaint();
+        }
+      });
+
+      /*
+       * User က buffering ဖြစ်နေချိန် Pause နှိပ်ထားရင်လည်း
+       * frame အသင့်ရှိနေသရွေ့ spinner ကို မထားတော့ပါ။
+       */
+      player.on('pause',function(){
+        if(
+          v &&
+          v.readyState >= 2 &&
+          !v.seeking
+        ){
+          finishLoadingAfterPaint();
+        }
+      });
+
+      player.on('ended',function(){
+        cancelLoading();
       });
 
       player.on('error',function(){
@@ -3135,7 +3243,7 @@ ${footer()}`;
     }else if(v){
       /*
        * Plyr CDN မတက်လို့ native video ဖြစ်သွားရင်လည်း
-       * event logic တူတူသုံးမယ်။
+       * spinner logic တူတူသုံးမယ်။
        */
       v.addEventListener('loadstart',function(){
         keepLoadingOnTop();
@@ -3157,18 +3265,48 @@ ${footer()}`;
         showLoading();
       });
 
-      v.addEventListener('playing',firstFrameReady);
-      v.addEventListener('timeupdate',videoStartedProgressing);
+      v.addEventListener('playing',function(){
+        finishLoadingAfterPaint();
+      });
 
-      /*
-       * ဒီ event မှာ spinner မဖျောက်ပါ။
-       */
+      v.addEventListener('canplay',function(){
+        finishLoadingAfterPaint();
+      });
+
+      v.addEventListener('canplaythrough',function(){
+        finishLoadingAfterPaint();
+      });
+
       v.addEventListener('loadeddata',function(){
-        keepLoadingOnTop();
+        if(v.readyState >= 2){
+          finishLoadingAfterPaint();
+        }
       });
 
       v.addEventListener('seeked',function(){
         finishLoadingAfterPaint();
+      });
+
+      v.addEventListener('timeupdate',function(){
+        if(
+          v.readyState >= 2 &&
+          !v.seeking
+        ){
+          finishLoadingAfterPaint();
+        }
+      });
+
+      v.addEventListener('pause',function(){
+        if(
+          v.readyState >= 2 &&
+          !v.seeking
+        ){
+          finishLoadingAfterPaint();
+        }
+      });
+
+      v.addEventListener('ended',function(){
+        cancelLoading();
       });
 
       v.addEventListener('error',function(){
