@@ -1,7 +1,3 @@
-
-
-
-
 // ── Session / key constants ──
 const SESSION_HOURS       = 24 * 30; // 720 hours = 30 days
 const COOKIE_NAME         = "__Host-cmflix_sess";
@@ -2890,63 +2886,141 @@ function watchPage(
   let seriesNav = "";
   const posterImg = htmlEscape(item.slide_image || item.poster || "");
 
-  if (item.type === "series") {
-    const seasons = Array.isArray(item.seasons) ? item.seasons : [];
+    if (item.type === "series") {
+    const seasons =
+      Array.isArray(item.seasons)
+        ? item.seasons
+        : [];
+
     const seasonTabs = seasons.map((s, si) => `
-      <button class="season-tab ${si === 0 ? "on" : ""}" data-s="${si}">Season ${s.season || (si + 1)}</button>`).join("");
+      <button
+        class="season-tab ${si === 0 ? "on" : ""}"
+        data-s="${si}"
+      >
+        Season ${s.season || (si + 1)}
+      </button>
+    `).join("");
+
     const epLists = seasons.map((s, si) => {
-      const eps =
-  (s.episodes || []).map((e, ei) => {
-    const episodeTitle =
-      e.title ||
-      `Episode ${e.ep || ei + 1}`;
+      const eps = (s.episodes || []).map((e, ei) => {
+        const episodeTitle =
+          e.title ||
+          `Episode ${e.ep || ei + 1}`;
 
-    return `
-    <button
-      class="ep-btn"
-      data-s="${si}"
-      data-e="${ei}"
-      data-title="${htmlEscape(episodeTitle)}"
-    >
-      <span class="ep-no">
-        ${e.ep || ei + 1}
-      </span>
+        return `
+          <button
+            class="ep-btn"
+            data-s="${si}"
+            data-e="${ei}"
+            data-title="${htmlEscape(episodeTitle)}"
+          >
+            <span class="ep-no">
+              ${e.ep || ei + 1}
+            </span>
 
-      <span class="ep-tt">
-        ${htmlEscape(episodeTitle)}
-      </span>
+            <span class="ep-tt">
+              ${htmlEscape(episodeTitle)}
+            </span>
 
-      <span class="ep-play">▶</span>
-    </button>`;
-  }).join("");
+            <span class="ep-play">▶</span>
+          </button>`;
+      }).join("");
 
+      return `
+        <div
+          class="ep-list ${si === 0 ? "on" : ""}"
+          data-s="${si}"
+        >
+          ${eps || `
+            <div class="empty">
+              ဒီ Season မှာ Episode မရှိသေးပါ
+            </div>
+          `}
+        </div>`;
+    }).join("");
 
     seriesNav = `
       <div class="seasons">
-        <div class="season-tabs">${seasonTabs || '<span style="color:var(--mut)">Season မရှိသေးပါ</span>'}</div>
+        <div class="season-tabs">
+          ${seasonTabs || `
+            <span style="color:var(--mut)">
+              Season မရှိသေးပါ
+            </span>
+          `}
+        </div>
+
         ${epLists}
       </div>`;
+
     playerArea = `
       <div class="player-box">
-        <video id="cmPlayer" playsinline crossorigin preload="none" poster="${posterImg}"></video>
-        <div class="cm-loading" id="cmLoading"><div class="cm-ring"></div></div>
-        <div class="poster-cover" id="posterCover" style="background-image:url('${posterImg}')">
-          <div class="poster-cover-play"><span>▶</span></div>
+        <video
+          id="cmPlayer"
+          playsinline
+          crossorigin
+          preload="none"
+          poster="${posterImg}"
+        ></video>
+
+        <div
+          class="cm-loading"
+          id="cmLoading"
+        >
+          <div class="cm-ring"></div>
+        </div>
+
+        <div
+          class="poster-cover"
+          id="posterCover"
+          style="background-image:url('${posterImg}')"
+        >
+          <div class="poster-cover-play">
+            <span>▶</span>
+          </div>
         </div>
       </div>
-      <div class="now-playing" id="nowPlaying"></div>`;
+
+      <div
+        class="now-playing"
+        id="nowPlaying"
+      ></div>`;
   } else {
-    const st = streams.single || { video: "", dl: "" };
+    const st = streams.single || {
+      video: "",
+      dl: "",
+    };
+
     playerArea = `
       <div class="player-box">
-        <video id="cmPlayer" playsinline crossorigin preload="none" poster="${posterImg}"
-          data-video="${htmlEscape(st.video || "")}" data-dl="${htmlEscape(st.dl || "")}"></video>
-        <div class="cm-loading" id="cmLoading"><div class="cm-ring"></div></div>
-        <div class="poster-cover" id="posterCover" style="background-image:url('${posterImg}')">
-          <div class="poster-cover-play"><span>▶</span></div>
+        <video
+          id="cmPlayer"
+          playsinline
+          crossorigin
+          preload="none"
+          poster="${posterImg}"
+          data-video="${htmlEscape(st.video || "")}"
+          data-dl="${htmlEscape(st.dl || "")}"
+        ></video>
+
+        <div
+          class="cm-loading"
+          id="cmLoading"
+        >
+          <div class="cm-ring"></div>
+        </div>
+
+        <div
+          class="poster-cover"
+          id="posterCover"
+          style="background-image:url('${posterImg}')"
+        >
+          <div class="poster-cover-play">
+            <span>▶</span>
+          </div>
         </div>
       </div>`;
   }
+
 
   const gateBanner = gated ? `
     <div class="gate" id="gateBanner">
