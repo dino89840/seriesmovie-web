@@ -3455,26 +3455,56 @@ ${footer()}`;
     }
 
     /*
-     * Seek မပြီးသေးရင် မဖျောက်သေးဘူး။
-     * seeked / playing / canplay event ပြန်လာရင် ထပ်စစ်မယ်။
+     * Seek မပြီးသေးရင် Cover နဲ့ Loading ကို
+     * ဆက်ပြထားမယ်။
      */
     if(v.seeking){
       pendingFinishCycle=-1;
       return;
     }
 
+    /*
+     * အရေးကြီးသောပြင်ဆင်ချက်:
+     *
+     * Series ပထမဆုံး Episode မှာ source ထည့်ပြီးနောက်
+     * loadeddata / canplay event က tryPlay() မစခင်
+     * ရောက်လာနိုင်ပါတယ်။
+     *
+     * အဲဒီအချိန် video က paused ဖြစ်နေသေးတာကြောင့်
+     * Cover ကို စောစောမဖျောက်ရပါ။
+     *
+     * Cover ပေါ်နေသေးပြီး video မစသေးရင်
+     * Cover နဲ့ Loading အဝိုင်းကို ဆက်ထားမယ်။
+     * playing event ပြန်ရောက်ပြီး actual frame အသင့်ဖြစ်မှ
+     * ဒီ function ကို ပြန်ခေါ်ပြီး ဖျောက်ပါမယ်။
+     */
+    var coverStillVisible =
+      coverEl &&
+      !coverEl.classList.contains('hide');
+
+    if(coverStillVisible && v.paused){
+      pendingFinishCycle=-1;
+      return;
+    }
+
+    /*
+     * Video စတင်ပြီး frame အသင့်ဖြစ်ပြီ။
+     * Loading spinner ကို အရင်ဖျောက်မယ်။
+     */
     if(loadEl){
       loadEl.classList.remove('show');
     }
 
     var box=getPlayerBox();
+
     if(box){
       box.classList.remove('is-loading');
     }
 
     /*
-     * ပထမဆုံး video frame အသင့်ဖြစ်ပြီဆိုမှ
-     * poster cover ကို ဖျောက်မယ်။
+     * Movie နဲ့ Series နှစ်မျိုးလုံးမှာ
+     * video တကယ်စပြီး frame အသင့်ဖြစ်မှ
+     * Cover ကို ဖျောက်မယ်။
      */
     if(coverEl){
       coverEl.classList.add('hide');
