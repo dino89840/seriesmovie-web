@@ -2533,9 +2533,29 @@ function watchPage(
       backdrop-filter:blur(14px);
     }
 
+    /*
+     * Video မစသေးတဲ့ ပုံမှန်အခြေအနေမှာ Plyr controls ကို ဖျောက်ထားမယ်။
+     */
     .player-box .plyr--video.plyr--stopped .plyr__controls{
       opacity:0;
       pointer-events:none;
+    }
+
+    /*
+     * Loading ဖြစ်နေချိန်မှာ Plyr က hideControls ကြောင့်
+     * controls ကို စောစောမဖျောက်နိုင်အောင် ထိန်းထားမယ်။
+     */
+    .player-box.is-loading .plyr__controls{
+      opacity:1 !important;
+      visibility:visible !important;
+    }
+
+    /*
+     * Spinner overlay က Plyr wrapper ထက် အမြဲအပေါ်မှာရှိစေရန်။
+     */
+    .player-box.is-loading .cm-loading{
+      display:flex;
+      z-index:999;
     }
 
     @media(max-width:560px){
@@ -2737,52 +2757,176 @@ ${footer()}`;
   var loadEl=document.getElementById('cmLoading');
   var cur={video:'',dl:'',title:''};
 
-  // ── Loading spinner ကို ပထမဆုံး Play မှာပါ မပျောက်အောင် ထိန်းချုပ်ခြင်း ──
+  // ── Video frame တကယ် screen ပေါ်ရောက်မှ spinner ဖျောက်ရန် ──
   var loadingSince = 0;
   var loadingHideTimer = null;
-  var MIN_LOADING_MS = 350;
+  var loadingCycle = 0;
 
-  function showLoading(){
-    if(!loadEl) return;
-    if(loadingHideTimer){
-      clearTimeout(loadingHideTimer);
-      loadingHideTimer = null;
-    }
-    loadingSince = Date.now();
-    loadEl.classList.add('show');
-  }
+  /*
+   * Spinner အနည်းဆုံး မြင်ရမယ့်အချိန်။
+   * Flash လို ခဏလေးပေါ်ပြီး ပျောက်တာ မဖြစ်အောင် 450ms ထားတယ်။
+   */
+  var MIN_LOADING_MS = 450;
 
-  function hideLoading(force){
-    if(!loadEl) return;
-
-    if(force){
-      if(loadingHideTimer){
-        clearTimeout(loadingHideTimer);
-        loadingHideTimer = null;
-      }
-      loadEl.classList.remove('show');
-      return;
-    }
-
-    var elapsed = Date.now() - (loadingSince || Date.now());
-    var wait = Math.max(0, MIN_LOADING_MS - elapsed);
-
-    if(loadingHideTimer) clearTimeout(loadingHideTimer);
-    loadingHideTimer = setTimeout(function(){
-      if(loadEl) loadEl.classList.remove('show');
-    }, wait);
+  function getPlayerBox(){
+    return document.querySelector('.player-box');
   }
 
   function keepLoadingOnTop(){
     try{
-      var box=document.querySelector('.player-box');
+      var box=getPlayerBox();
+
       if(box && loadEl && loadEl.parentNode !== box){
         box.appendChild(loadEl);
       }
+
       if(loadEl){
         loadEl.style.zIndex='999';
       }
     }catch(_){}
+  }
+
+  function showLoading(){
+    if(!loadEl) return;
+
+    if(loadingHideTimer){
+      clearTimeout(loadingHideTimer);
+      loadingHideTimer=null;
+    }
+
+    loadingCycle++;
+    loadingSince=Date.now();
+
+    keepLoadingOnTop();
+
+    loadEl.classList.add('show');
+
+    var box=getPlayerBox();
+    if(box){
+      box.classList.add('is-loading');
+    }
+  }
+
+  /*
+   * Error ဖြစ်တာ၊ play() reject ဖြစ်တာမျိုးမှာ
+   * frame မစောင့်တော့ဘဲ spinner ကို ချက်ချင်းဖျောက်မယ်။
+   *
+   * Poster cover ကိုတော့ ဒီ function မှာ မဖျောက်ပါ။
+   * ဒါမှ ပထမဆုံး video load မအောင်မြင်ရင် black screen မဖြစ်ဘူး။
+   */
+  function cancelLoading(){
+    loadingCycle++;
+
+    if(loadingHideTimer){
+      clearTimeout(loadingHideTimer);
+      loadingHideTimer=null;
+    }
+
+    if(loadEl){
+      loadEl.classList.remove('show');
+    }
+
+    var box=getPlayerBox();
+    if(box){
+      box.classList.remove('is-loading');
+    }
+  }
+
+  /*
+   * Browser က video frame တကယ် render လုပ်ပြီးတဲ့နောက်
+   * spinner နဲ့ poster cover ကို ဖျောက်မယ်။
+   */
+  function finishLoadingAfterPaint(){
+    if(!loadEl || !loadEl.classList.contains('show')){
+      return;
+    }
+
+    var cycle=loadingCycle;
+
+    function finish(){
+      /*
+       * finish စောင့်နေစဉ် waiting/loadstart အသစ်ဖြစ်သွားရင်
+       * အဟောင်း callback က spinner ကို မဖျောက်ရ။
+       */
+      if(cycle !== loadingCycle){
+        return;
+      }
+
+      if(!v || v.readyState < 2){
+        return;
+      }
+
+      var elapsed=Date.now()-(loadingSince || Date.now());
+      var wait=Math.max(0,MIN_LOADING_MS-elapsed);
+
+      if(loadingHideTimer){
+        clearTimeout(loadingHideTimer);
+      }
+
+      loadingHideTimer=setTimeout(function(){
+        if(cycle !== loadingCycle){
+          return;
+        }
+
+        if(loadEl){
+          loadEl.classList.remove('show');
+        }
+
+        var box=getPlayerBox();
+        if(box){
+          box.classList.remove('is-loading');
+        }
+
+        /*
+         * Poster ကို video frame တကယ်ပေါ်ပြီးမှ ဖျောက်မယ်။
+         * ပထမဆုံး cold load မှာ black screen မဖြစ်တော့ဘူး။
+         */
+        if(coverEl){
+          coverEl.classList.add('hide');
+        }
+
+        loadingHideTimer=null;
+      },wait);
+    }
+
+    /*
+     * requestVideoFrameCallback ရှိတဲ့ browser တွေမှာ
+     * decoded frame တကယ် screen ပေါ်တက်တဲ့အချိန်ကို စောင့်မယ်။
+     */
+    if(
+      v &&
+      typeof v.requestVideoFrameCallback === 'function'
+    ){
+      try{
+        v.requestVideoFrameCallback(function(){
+          finish();
+        });
+        return;
+      }catch(_){}
+    }
+
+    /*
+     * Browser အဟောင်းတွေမှာ animation frame နှစ်ကြိမ်စောင့်ပြီးမှ
+     * spinner ဖျောက်မယ်။
+     */
+    requestAnimationFrame(function(){
+      requestAnimationFrame(function(){
+        finish();
+      });
+    });
+  }
+
+  /*
+   * မူရင်း code ထဲက hideLoading(true/false) ခေါ်ထားတာတွေ
+   * ဆက်အလုပ်လုပ်နိုင်ရန် compatibility wrapper ထားတယ်။
+   */
+  function hideLoading(force){
+    if(force){
+      cancelLoading();
+      return;
+    }
+
+    finishLoadingAfterPaint();
   }
 
   // ── Custom toast box (browser alert အစား) ──
@@ -2890,83 +3034,183 @@ ${footer()}`;
     keepLoadingOnTop();
 
     function firstFrameReady(){
-      // actual video စပြ / frame တက်လာမှ spinner ဖျောက်
-      hideLoading(false);
+      /*
+       * playing event ရောက်ရုံနဲ့ ချက်ချင်းမဖျောက်ဘူး။
+       * requestVideoFrameCallback နဲ့ actual rendered frame ကို စောင့်မယ်။
+       */
+      finishLoadingAfterPaint();
     }
 
-    if (player) {
-      player.on('enterfullscreen', function() {
-        if (screen.orientation && screen.orientation.lock) {
-          screen.orientation.lock('landscape').catch(function() {});
+    function videoStartedProgressing(){
+      /*
+       * Browser တချို့မှာ playing event အရင်ရောက်ပြီး
+       * requestVideoFrameCallback နောက်ကျနိုင်တာအတွက် safety check။
+       *
+       * currentTime တကယ်ရွေ့မှသာ frame finish စစ်မယ်။
+       */
+      if(
+        v &&
+        v.readyState >= 2 &&
+        Number(v.currentTime || 0) > 0
+      ){
+        finishLoadingAfterPaint();
+      }
+    }
+
+    if(player){
+      player.on('enterfullscreen',function(){
+        if(screen.orientation && screen.orientation.lock){
+          screen.orientation
+            .lock('landscape')
+            .catch(function(){});
         }
       });
 
-      player.on('exitfullscreen', function() {
-        if (screen.orientation && screen.orientation.unlock) {
+      player.on('exitfullscreen',function(){
+        if(screen.orientation && screen.orientation.unlock){
           screen.orientation.unlock();
         }
       });
 
-      // ── Loading spinner —
-      // loadstart / waiting / seeking တွေမှာ ပြ
-      // canplay မှာ မဖျောက်တော့ပါ (ပထမ video မှာ canplay မြန်ပြီး spinner ပျောက်သွားတာ fix)
-      player.on('loadstart', function(){ keepLoadingOnTop(); showLoading(); });
-      player.on('waiting', function(){ keepLoadingOnTop(); showLoading(); });
-      player.on('seeking', function(){ keepLoadingOnTop(); showLoading(); });
-      player.on('stalled', function(){ keepLoadingOnTop(); showLoading(); });
-
-      // actual playback/frame တက်လာမှ ဖျောက်
-      player.on('playing', firstFrameReady);
-      player.on('timeupdate', firstFrameReady);
-      player.on('loadeddata', function(){
-        // autoplay/play promise နောက်ကျနိုင်လို့ loadeddata တစ်ခုတည်းနဲ့ ချက်ချင်းမဖျောက်ဘဲ
-        // video readyState ရှိမှ အနည်းဆုံးအချိန်ပြီးမှ ဖျောက်
-        if(v && v.readyState >= 2) hideLoading(false);
+      /*
+       * Network/source loading ဖြစ်တိုင်း spinner ပြ။
+       */
+      player.on('loadstart',function(){
+        keepLoadingOnTop();
+        showLoading();
       });
 
-      player.on('seeked', function(){ hideLoading(false); });
-      player.on('error', function(){ hideLoading(true); });
+      player.on('waiting',function(){
+        keepLoadingOnTop();
+        showLoading();
+      });
+
+      player.on('seeking',function(){
+        keepLoadingOnTop();
+        showLoading();
+      });
+
+      player.on('stalled',function(){
+        keepLoadingOnTop();
+        showLoading();
+      });
+
+      /*
+       * playing ရောက်ပြီး actual frame render ဖြစ်မှ spinner ဖျောက်။
+       */
+      player.on('playing',firstFrameReady);
+
+      /*
+       * timeupdate ကို ချက်ချင်းဖျောက်ဖို့ မသုံးတော့ဘူး။
+       * currentTime တကယ်ရွေ့နေမှ rendered-frame check လုပ်မယ်။
+       */
+      player.on('timeupdate',videoStartedProgressing);
+
+      /*
+       * loadeddata မှာ spinner မဖျောက်ရ။
+       * loadeddata က frame screen ပေါ်တက်ပြီးပြီလို့ မဆိုလိုပါ။
+       */
+      player.on('loadeddata',function(){
+        keepLoadingOnTop();
+      });
+
+      /*
+       * Seek ပြီးသွားရင် seeked frame render ကို စောင့်ပြီးဖျောက်။
+       */
+      player.on('seeked',function(){
+        finishLoadingAfterPaint();
+      });
+
+      player.on('error',function(){
+        cancelLoading();
+      });
 
       if(GATED){
-        player.on('play',function(){ player.pause(); gateMsg(); });
+        player.on('play',function(){
+          player.pause();
+          cancelLoading();
+          gateMsg();
+        });
       }
-    } else if (v) {
-      // Plyr မရှိရင် native video element event တွေ သုံး
-      v.addEventListener('loadstart', function(){ keepLoadingOnTop(); showLoading(); });
-      v.addEventListener('waiting', function(){ keepLoadingOnTop(); showLoading(); });
-      v.addEventListener('seeking', function(){ keepLoadingOnTop(); showLoading(); });
-      v.addEventListener('stalled', function(){ keepLoadingOnTop(); showLoading(); });
-
-      v.addEventListener('playing', firstFrameReady);
-      v.addEventListener('timeupdate', firstFrameReady);
-      v.addEventListener('loadeddata', function(){
-        if(v.readyState >= 2) hideLoading(false);
+    }else if(v){
+      /*
+       * Plyr CDN မတက်လို့ native video ဖြစ်သွားရင်လည်း
+       * event logic တူတူသုံးမယ်။
+       */
+      v.addEventListener('loadstart',function(){
+        keepLoadingOnTop();
+        showLoading();
       });
 
-      v.addEventListener('seeked', function(){ hideLoading(false); });
-      v.addEventListener('error', function(){ hideLoading(true); });
+      v.addEventListener('waiting',function(){
+        keepLoadingOnTop();
+        showLoading();
+      });
+
+      v.addEventListener('seeking',function(){
+        keepLoadingOnTop();
+        showLoading();
+      });
+
+      v.addEventListener('stalled',function(){
+        keepLoadingOnTop();
+        showLoading();
+      });
+
+      v.addEventListener('playing',firstFrameReady);
+      v.addEventListener('timeupdate',videoStartedProgressing);
+
+      /*
+       * ဒီ event မှာ spinner မဖျောက်ပါ။
+       */
+      v.addEventListener('loadeddata',function(){
+        keepLoadingOnTop();
+      });
+
+      v.addEventListener('seeked',function(){
+        finishLoadingAfterPaint();
+      });
+
+      v.addEventListener('error',function(){
+        cancelLoading();
+      });
     }
   }
 
   function revealPlayer(){
-    if(coverEl) coverEl.classList.add('hide');
-
-    // cover ဖျောက်တာနဲ့ spinner ကို ချက်ချင်းပြ
+    /*
+     * Poster cover ကို ဒီနေရာမှာ မဖျောက်တော့ပါ။
+     *
+     * Video frame တကယ်ပေါ်လာတဲ့အချိန်
+     * finishLoadingAfterPaint() ထဲမှာမှ ဖျောက်မယ်။
+     *
+     * ဒါမှ ပထမဆုံး cold proxy load မှာ
+     * poster ပျောက်ပြီး black screen ဖြစ်တာ မရှိတော့ဘူး။
+     */
     keepLoadingOnTop();
     showLoading();
 
     initPlayer();
 
-    // Plyr က DOM ပြန်စီပြီးနောက် overlay ကို player-box ထဲ အပေါ်ဆုံးမှာ ပြန်တင်
+    /*
+     * Plyr က video element ကို wrapper ထဲ ပြန်ရွှေ့ပြီးနောက်
+     * spinner overlay ကို player-box ရဲ့ အပေါ်ဆုံးမှာ ပြန်ထားမယ်။
+     */
     setTimeout(function(){
       keepLoadingOnTop();
-      showLoading();
-    }, 30);
+
+      if(loadEl && !loadEl.classList.contains('show')){
+        showLoading();
+      }
+    },30);
 
     setTimeout(function(){
       keepLoadingOnTop();
-      showLoading();
-    }, 120);
+
+      if(loadEl && !loadEl.classList.contains('show')){
+        showLoading();
+      }
+    },120);
   }
 
   function gateMsg(){
