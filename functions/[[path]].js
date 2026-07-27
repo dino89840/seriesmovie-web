@@ -1945,9 +1945,9 @@ async function cachedHtml(context, request, ttlSec, builder) {
 
 
 
-// Plyr CDN (modern player)
-const PLYR_CSS_CDN = "https://cdn.plyr.io/3.7.8/plyr.css";
-const PLYR_JS_CDN  = "https://cdn.plyr.io/3.7.8/plyr.polyfilled.js";
+// Plyr CDN — latest stable player
+const PLYR_CSS_CDN = "https://cdn.plyr.io/3.8.4/plyr.css";
+const PLYR_JS_CDN  = "https://cdn.plyr.io/3.8.4/plyr.polyfilled.js";
 
 function pageShell(title, body, opts = {}) {
   return `<!doctype html>
@@ -2463,7 +2463,102 @@ function watchPage(
     </div>` : "";
 
   const extraCss = `
-    :root{--plyr-color-main:var(--acc2);--plyr-video-control-color:#fff;--plyr-video-background:#000;--plyr-menu-background:#0d1424;--plyr-menu-color:#eef2ff;--plyr-control-radius:8px}
+    :root{
+      --plyr-color-main:#ff2e54;
+      --plyr-video-background:#000;
+      --plyr-video-control-color:#fff;
+      --plyr-video-control-color-hover:#fff;
+      --plyr-video-control-background-hover:#ff2e54;
+      --plyr-video-controls-background:linear-gradient(
+        180deg,
+        transparent 0%,
+        rgba(0,0,0,.16) 20%,
+        rgba(0,0,0,.92) 100%
+      );
+      --plyr-menu-background:rgba(10,14,26,.96);
+      --plyr-menu-color:#eef2ff;
+      --plyr-menu-radius:12px;
+      --plyr-menu-shadow:0 12px 32px rgba(0,0,0,.55);
+      --plyr-tooltip-background:#eef2ff;
+      --plyr-tooltip-color:#090d18;
+      --plyr-tooltip-radius:7px;
+      --plyr-control-radius:9px;
+      --plyr-control-icon-size:19px;
+      --plyr-control-spacing:11px;
+      --plyr-range-track-height:5px;
+      --plyr-range-thumb-height:14px;
+      --plyr-progress-loading-background:rgba(255,255,255,.24);
+      --plyr-video-progress-buffered-background:rgba(255,255,255,.25);
+      --plyr-font-family:inherit;
+    }
+
+    .player-box .plyr__controls{
+      padding:38px 14px 12px;
+    }
+
+    .player-box .plyr__control{
+      transition:
+        background-color .16s ease,
+        color .16s ease,
+        transform .16s ease;
+    }
+
+    .player-box .plyr__control:hover{
+      transform:scale(1.06);
+    }
+
+    .player-box .plyr__control--overlaid{
+      width:68px;
+      height:68px;
+      padding:20px;
+      color:#fff;
+      background:linear-gradient(135deg,#e50914,#ff2e54);
+      border:2px solid rgba(255,255,255,.22);
+      box-shadow:
+        0 10px 35px rgba(229,9,20,.5),
+        inset 0 1px 0 rgba(255,255,255,.25);
+    }
+
+    .player-box .plyr__control--overlaid:hover{
+      background:linear-gradient(135deg,#ff2e54,#ff5b74);
+      transform:translate(-50%,-50%) scale(1.08);
+    }
+
+    .player-box .plyr__progress input[type=range]{
+      cursor:pointer;
+    }
+
+    .player-box .plyr__menu__container{
+      border:1px solid rgba(255,255,255,.1);
+      backdrop-filter:blur(14px);
+    }
+
+    .player-box .plyr--video.plyr--stopped .plyr__controls{
+      opacity:0;
+      pointer-events:none;
+    }
+
+    @media(max-width:560px){
+      :root{
+        --plyr-control-spacing:8px;
+        --plyr-control-icon-size:17px;
+      }
+
+      .player-box .plyr__controls{
+        padding:32px 7px 7px;
+      }
+
+      .player-box .plyr__control--overlaid{
+        width:58px;
+        height:58px;
+        padding:17px;
+      }
+
+      .player-box .plyr__volume{
+        min-width:0;
+        width:auto;
+      }
+    }
     .watch{display:grid;grid-template-columns:1fr;gap:22px;margin:18px 0}
     @media(min-width:900px){ .watch.has-info{grid-template-columns:1fr 330px} }
     .player-box{position:relative;background:#000;border-radius:0;overflow:hidden;aspect-ratio:16/9;box-shadow:0 14px 40px rgba(0,0,0,.65)}
@@ -2715,12 +2810,80 @@ ${footer()}`;
 
     try{
       player=new Plyr(v,{
-        controls:['play-large','play','progress','current-time','duration','mute','volume','settings','pip','airplay','fullscreen'],
-        settings:['quality','speed','loop'],
-        speed:{selected:1,options:[0.5,0.75,1,1.25,1.5,2]},
+        controls:[
+          'play-large',
+          'play',
+          'progress',
+          'current-time',
+          'duration',
+          'mute',
+          'volume',
+          'settings',
+          'pip',
+          'airplay',
+          'fullscreen'
+        ],
+
+        /*
+         * လက်ရှိမှာ MP4 source တစ်ခုတည်းပဲ သုံးထားလို့
+         * quality menu အလွတ်မပေါ်အောင် ဖယ်ထားတယ်။
+         */
+        settings:[
+          'speed',
+          'loop'
+        ],
+
+        speed:{
+          selected:1,
+          options:[
+            0.5,
+            0.75,
+            1,
+            1.25,
+            1.5,
+            1.75,
+            2
+          ]
+        },
+
         ratio:'16:9',
-        keyboard:{focused:true,global:true},
-        tooltips:{controls:true,seek:true}
+        autoplay:false,
+        autopause:true,
+        playsinline:true,
+        clickToPlay:true,
+        hideControls:true,
+        resetOnEnd:false,
+        disableContextMenu:true,
+        seekTime:10,
+
+        /*
+         * Global keyboard shortcut မသုံးတော့တာကြောင့်
+         * page scroll လုပ်နေချိန် Space/Arrow key မတိုက်ခိုက်တော့ဘူး။
+         * Player ကို focus လုပ်ထားချိန်မှာပဲ shortcut သုံးမယ်။
+         */
+        keyboard:{
+          focused:true,
+          global:false
+        },
+
+        tooltips:{
+          controls:true,
+          seek:true
+        },
+
+        fullscreen:{
+          enabled:true,
+          fallback:true,
+          iosNative:true
+        },
+
+        /*
+         * User volume / speed preference ကို browser ထဲမှတ်ထားမယ်။
+         */
+        storage:{
+          enabled:true,
+          key:'cmflix-player'
+        }
       });
     }catch(_){}
 
