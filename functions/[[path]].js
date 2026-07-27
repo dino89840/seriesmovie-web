@@ -3313,12 +3313,44 @@ ${topBar(item.type, "", user)}
   <span class="cm-toast-tx" id="cmToastTx">အပိုင်း ရွေးပါ</span>
 </div>
 ${footer()}`;
+
+  /*
+   * buildStreams() က Series အတွက် ကြိုထုတ်ပေးထားတဲ့
+   * ပထမ Episode signed link ကိုယူမယ်။
+   */
+  const initialSeriesStream =
+    item.type === "series" &&
+    streams &&
+    streams.initialEpisode
+      ? streams.initialEpisode
+      : null;
+
+  /*
+   * Inline JavaScript ထဲ JSON ထည့်တဲ့အခါ
+   * </script> စတဲ့ HTML injection မဖြစ်စေရန်
+   * "<" နဲ့ Unicode line separator တွေ escape လုပ်မယ်။
+   */
+  const initialSeriesStreamJson =
+    JSON.stringify(initialSeriesStream)
+      .replace(/</g, "\\u003c")
+      .replace(/\u2028/g, "\\u2028")
+      .replace(/\u2029/g, "\\u2029");
+
   const script = `
 (function(){
   var GATED = ${gated ? "true" : "false"};
 
   var ITEM_ID =
     ${JSON.stringify(String(item.id || ""))};
+
+  /*
+   * Server က page load အချိန်မှာ ကြိုထုတ်ပေးထားတဲ့
+   * ပထမ Series Episode signed stream ဖြစ်ပါတယ်။
+   *
+   * Series မဟုတ်ရင် null ဖြစ်ပါမယ်။
+   */
+  var INITIAL_SERIES_STREAM =
+    ${initialSeriesStreamJson};
 
   var STREAM_LINK_CACHE_MS =
     ${Math.max(
@@ -3339,7 +3371,77 @@ ${footer()}`;
   var emptyEl=document.getElementById('playerEmpty');
   var nowEl=document.getElementById('nowPlaying');
   var loadEl=document.getElementById('cmLoading');
-  var cur={video:'',dl:'',title:''};
+
+  var cur={
+    video:'',
+    dl:'',
+    title:''
+  };
+
+  /*
+   * Series ရဲ့ ပထမ Episode signed link ကို
+   * page စတက်လာတာနဲ့ browser cache ထဲ ကြိုထည့်မယ်။
+   *
+   * ဒါကြောင့်:
+   * - ပထမ Episode button နှိပ်ရင် API request မစောင့်ရ
+   * - Series Play button ကို တန်းနှိပ်ရင် Movie လိုဖွင့်နိုင်
+   */
+  if(
+    INITIAL_SERIES_STREAM &&
+    INITIAL_SERIES_STREAM.video &&
+    Number.isInteger(
+      INITIAL_SERIES_STREAM.s
+    ) &&
+    Number.isInteger(
+      INITIAL_SERIES_STREAM.e
+    )
+  ){
+    var initialEpisodeCacheKey =
+      String(
+        INITIAL_SERIES_STREAM.s
+      ) +
+      ':' +
+      String(
+        INITIAL_SERIES_STREAM.e
+      );
+
+    episodeLinkCache[
+      initialEpisodeCacheKey
+    ] = {
+      video:
+        INITIAL_SERIES_STREAM.video ||
+        '',
+
+      dl:
+        INITIAL_SERIES_STREAM.dl ||
+        INITIAL_SERIES_STREAM.video ||
+        '',
+
+      /*
+       * ဒီအချိန်မှာ server ကနေ အသစ်ရောက်လာတဲ့
+       * signed link ဖြစ်တာကြောင့် Date.now() သုံးမယ်။
+       */
+      savedAt:
+        Date.now()
+    };
+
+    /*
+     * Series Play button ကို Episode မရွေးဘဲ
+     * နှိပ်ရင် ပထမ Episode တန်းဖွင့်နိုင်စေရန်။
+     */
+    cur.video =
+      INITIAL_SERIES_STREAM.video ||
+      '';
+
+    cur.dl =
+      INITIAL_SERIES_STREAM.dl ||
+      INITIAL_SERIES_STREAM.video ||
+      '';
+
+    cur.title =
+      INITIAL_SERIES_STREAM.title ||
+      '';
+  }
 
   // ── Video loading / seek spinner controller ──
   var loadingSince=0;
@@ -5583,11 +5685,16 @@ async function buildStreams(
   gated,
   user
 ) {
+  /*
+   * Login မဝင်ထားသူ / Key expired ဖြစ်သူအတွက်
+   * signed stream link လုံးဝမထုတ်ပါ။
+   */
   if (gated) {
     if (item.type === "series") {
       return {
         seasons: [],
         lazy: true,
+        initialEpisode: null,
       };
     }
 
@@ -5600,22 +5707,152 @@ async function buildStreams(
   }
 
   /*
-   * Series episode URLs ကို page load မှာ မထုတ်တော့ဘူး။
-   * Episode button နှိပ်မှ /api/stream-links/... ကနေ ထုတ်မယ်။
+   * Series ဖြစ်ရင် Episode အားလုံးကို ကြို sign မလုပ်ပါ။
+   *
+   * ပထမဆုံး အသုံးပြုလို့ရတဲ့ Episode တစ်ခုကိုသာ
+   * Movie လို page load အချိန်မှာ signed link ကြိုထုတ်မယ်။
+   *
+   * ကျန် Episode တွေက /api/stream-links/... ကို
+   * နှိပ်တဲ့အချိန်မှ lazy fetch လုပ်မယ်။
    */
   if (item.type === "series") {
+    const seasons =
+      Array.isArray(item.seasons)
+        ? item.seasons
+        : [];
+
+    let firstEpisode = null;
+
+    /*
+     * Season 1 Episode 1 ကိုပဲ တိတိကျကျ ယူမထားဘဲ
+     * Episode ရှိတဲ့ ပထမဆုံး Season / Episode ကိုရှာမယ်။
+     *
+     * ဒါမှ Season 1 က ဗလာဖြစ်နေလည်း
+     * နောက် Season ထဲက ပထမ Episode ကို ကြို sign လုပ်နိုင်မယ်။
+     */
+    for (
+      let seasonIndex = 0;
+      seasonIndex < seasons.length;
+      seasonIndex++
+    ) {
+      const episodes =
+        Array.isArray(seasons[seasonIndex]?.episodes)
+          ? seasons[seasonIndex].episodes
+          : [];
+
+      for (
+        let episodeIndex = 0;
+        episodeIndex < episodes.length;
+        episodeIndex++
+      ) {
+        const realVideoUrl =
+          resolveRealUrl(
+            item,
+            seasonIndex,
+            episodeIndex,
+            false
+          );
+
+        /*
+         * Video URL မရှိတဲ့ Episode ကိုကျော်ပြီး
+         * အသုံးပြုလို့ရတဲ့ ပထမဆုံး Episode ကိုယူမယ်။
+         */
+        if (!isHttpUrl(realVideoUrl)) {
+          continue;
+        }
+
+        const episode = episodes[episodeIndex];
+
+        firstEpisode = {
+          s: seasonIndex,
+          e: episodeIndex,
+          title:
+            String(
+              episode?.title ||
+              `Episode ${
+                episode?.ep ||
+                episodeIndex + 1
+              }`
+            ).slice(0, 200),
+        };
+
+        break;
+      }
+
+      if (firstEpisode) {
+        break;
+      }
+    }
+
+    /*
+     * Series ထဲ အသုံးပြုလို့ရတဲ့ Episode မရှိရင်
+     * signed link မထုတ်ဘဲ lazy mode ပဲပြန်မယ်။
+     */
+    if (!firstEpisode) {
+      return {
+        seasons: [],
+        lazy: true,
+        initialEpisode: null,
+      };
+    }
+
+    const u =
+      await userStreamTag(user);
+
+    /*
+     * ပထမ Episode အတွက် Playback + Download
+     * signed URL နှစ်ခုကို parallel ထုတ်မယ်။
+     */
+    const [video, dl] =
+      await Promise.all([
+        makeStreamUrl(
+          env,
+          item.id,
+          {
+            s: firstEpisode.s,
+            e: firstEpisode.e,
+            download: false,
+            u,
+          }
+        ),
+
+        makeStreamUrl(
+          env,
+          item.id,
+          {
+            s: firstEpisode.s,
+            e: firstEpisode.e,
+            download: true,
+            u,
+          }
+        ),
+      ]);
+
     return {
       seasons: [],
       lazy: true,
+
+      /*
+       * watchPage JavaScript က ဒီ signed link ကို
+       * browser-side Episode cache ထဲ ကြိုထည့်မယ်။
+       */
+      initialEpisode: {
+        s: firstEpisode.s,
+        e: firstEpisode.e,
+        title: firstEpisode.title,
+        video,
+        dl,
+      },
     };
   }
 
-  const u = await userStreamTag(user);
-
   /*
-   * Single movie အတွက် signature နှစ်ခုကို
-   * sequential မလုပ်ဘဲ parallel ထုတ်မယ်။
+   * Movie / Adult / Random အတွက် လက်ရှိအတိုင်း
+   * signed playback + download link ကြိုထုတ်မယ်။
    */
+  const u =
+    await userStreamTag(user);
+
   const [video, dl] =
     await Promise.all([
       makeStreamUrl(
