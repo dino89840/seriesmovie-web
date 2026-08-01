@@ -2266,13 +2266,8 @@ function brandLogo() {
 //    ပြင်ပ resource — Plyr CDN, TMDB images, actress images, video source တွေကို ခွင့်ပြု
 const CSP_POLICY = [
   "default-src 'self'",
-
-  /*
-   * Video.js CDN ကို JavaScript / CSS load ခွင့်ပေးထားသည်။
-   */
-  "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
-  "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
-
+  "script-src 'self' 'unsafe-inline' https://cdn.plyr.io",
+  "style-src 'self' 'unsafe-inline' https://cdn.plyr.io",
   "img-src 'self' data: https: blob:",
   "media-src 'self' blob: https:",
   "connect-src 'self' https:",
@@ -2428,12 +2423,9 @@ async function cachedHtml(context, request, ttlSec, builder) {
 
 
 
-// Video.js CDN — fixed stable version
-const VIDEOJS_CSS_CDN =
-  "https://cdn.jsdelivr.net/npm/video.js@8.23.9/dist/video-js.min.css";
-
-const VIDEOJS_JS_CDN =
-  "https://cdn.jsdelivr.net/npm/video.js@8.23.9/dist/video.min.js";
+// Plyr CDN — latest stable player
+const PLYR_CSS_CDN = "https://cdn.plyr.io/3.8.4/plyr.css";
+const PLYR_JS_CDN  = "https://cdn.plyr.io/3.8.4/plyr.polyfilled.js";
 
 function pageShell(title, body, opts = {}) {
   return `<!doctype html>
@@ -2444,32 +2436,14 @@ function pageShell(title, body, opts = {}) {
 <meta name="robots" content="noindex,nofollow">
 <meta name="theme-color" content="#05070f">
 <title>${htmlEscape(title)}</title>
-
-${opts.videojs
-  ? `<link rel="stylesheet" href="${VIDEOJS_CSS_CDN}">`
-  : ""
-}
-
-<style>
-${CMFLIX_CSS}
-${opts.extraCss || ""}
-</style>
+${opts.plyr ? `<link rel="stylesheet" href="${PLYR_CSS_CDN}">` : ""}
+<style>${CMFLIX_CSS}${opts.extraCss || ""}</style>
 </head>
-
 <body>
 ${body}
-
-${opts.videojs
-  ? `<script src="${VIDEOJS_JS_CDN}"></script>`
-  : ""
-}
-
-${opts.script
-  ? `<script>${opts.script}</script>`
-  : ""
-}
-</body>
-</html>`;
+${opts.plyr ? `<script src="${PLYR_JS_CDN}"></script>` : ""}
+${opts.script ? `<script>${opts.script}</script>` : ""}
+</body></html>`;
 }
 
 const AUTH_CSS = `
@@ -3056,286 +3030,120 @@ function watchPage(
     </div>` : "";
 
   const extraCss = `
-    /*
-     * ══════════════════════════════════════════════
-     * VIDEO.JS — CM FLIX CUSTOM SKIN
-     * ══════════════════════════════════════════════
-     */
-
-    .player-box .video-js{
-      width:100%;
-      height:100%;
-      display:block;
-      font-family:inherit;
-      background:#000;
-      color:#fff;
-    }
-
-    .player-box .video-js .vjs-tech{
-      width:100%;
-      height:100%;
-      object-fit:contain;
-      background:#000;
-    }
-
-    /*
-     * Player controls နောက်ခံ gradient
-     */
-    .player-box .video-js .vjs-control-bar{
-      height:4.4em;
-      padding:0 .6em;
-      align-items:center;
-      background:linear-gradient(
+    :root{
+      --plyr-color-main:#ff2e54;
+      --plyr-video-background:#000;
+      --plyr-video-control-color:#fff;
+      --plyr-video-control-color-hover:#fff;
+      --plyr-video-control-background-hover:#ff2e54;
+      --plyr-video-controls-background:linear-gradient(
         180deg,
         transparent 0%,
-        rgba(0,0,0,.2) 18%,
-        rgba(0,0,0,.94) 100%
+        rgba(0,0,0,.16) 20%,
+        rgba(0,0,0,.92) 100%
       );
-      font-size:12px;
-      z-index:20;
+      --plyr-menu-background:rgba(10,14,26,.96);
+      --plyr-menu-color:#eef2ff;
+      --plyr-menu-radius:12px;
+      --plyr-menu-shadow:0 12px 32px rgba(0,0,0,.55);
+      --plyr-tooltip-background:#eef2ff;
+      --plyr-tooltip-color:#090d18;
+      --plyr-tooltip-radius:7px;
+      --plyr-control-radius:9px;
+      --plyr-control-icon-size:19px;
+      --plyr-control-spacing:11px;
+      --plyr-range-track-height:5px;
+      --plyr-range-thumb-height:14px;
+      --plyr-progress-loading-background:rgba(255,255,255,.24);
+      --plyr-video-progress-buffered-background:rgba(255,255,255,.25);
+      --plyr-font-family:inherit;
     }
 
-    .player-box .video-js .vjs-control{
-      width:3.5em;
+    .player-box .plyr__controls{
+      padding:38px 14px 12px;
+    }
+
+    .player-box .plyr__control{
       transition:
-        color .16s ease,
         background-color .16s ease,
+        color .16s ease,
         transform .16s ease;
     }
 
-    .player-box .video-js .vjs-control:hover{
-      color:#ff2e54;
-      transform:scale(1.08);
+    .player-box .plyr__control:hover{
+      transform:scale(1.06);
     }
 
-    /*
-     * Timeline / seek bar
-     */
-    .player-box .video-js .vjs-progress-control{
-      position:absolute;
-      left:12px;
-      right:12px;
-      top:-11px;
-      width:auto;
-      height:20px;
-    }
-
-    .player-box .video-js .vjs-progress-holder{
-      height:5px;
-      margin:0;
-      border-radius:10px;
-      background:rgba(255,255,255,.2);
-      transition:height .15s ease;
-    }
-
-    .player-box .video-js .vjs-progress-control:hover .vjs-progress-holder{
-      height:7px;
-    }
-
-    .player-box .video-js .vjs-load-progress{
-      border-radius:10px;
-      background:rgba(255,255,255,.28);
-    }
-
-    .player-box .video-js .vjs-load-progress div{
-      background:rgba(255,255,255,.18);
-    }
-
-    .player-box .video-js .vjs-play-progress{
-      border-radius:10px;
-      background:linear-gradient(
-        90deg,
-        #e50914,
-        #ff2e54
-      );
-    }
-
-    .player-box .video-js .vjs-play-progress::before{
+    .player-box .plyr__control--overlaid{
+      width:68px;
+      height:68px;
+      padding:20px;
       color:#fff;
-      text-shadow:
-        0 0 8px rgba(255,46,84,.9),
-        0 0 16px rgba(255,46,84,.6);
-    }
-
-    /*
-     * အလယ်က Main Play button
-     */
-    .player-box .video-js .vjs-big-play-button{
-      top:50%;
-      left:50%;
-      width:72px;
-      height:72px;
-      margin-top:-36px;
-      margin-left:-36px;
-      line-height:68px;
-      border-radius:50%;
-      border:2px solid rgba(255,255,255,.3);
-      color:#fff;
-      background:linear-gradient(
-        135deg,
-        #e50914,
-        #ff2e54
-      );
+      background:linear-gradient(135deg,#e50914,#ff2e54);
+      border:2px solid rgba(255,255,255,.22);
       box-shadow:
-        0 12px 38px rgba(229,9,20,.52),
-        inset 0 1px 0 rgba(255,255,255,.28);
-      transition:
-        transform .18s ease,
-        filter .18s ease,
-        box-shadow .18s ease;
+        0 10px 35px rgba(229,9,20,.5),
+        inset 0 1px 0 rgba(255,255,255,.25);
     }
 
-    .player-box .video-js:hover .vjs-big-play-button{
-      transform:scale(1.08);
-      filter:brightness(1.08);
-      background:linear-gradient(
-        135deg,
-        #ff2e54,
-        #ff5b74
-      );
-      box-shadow:
-        0 15px 44px rgba(229,9,20,.65),
-        inset 0 1px 0 rgba(255,255,255,.3);
+    .player-box .plyr__control--overlaid:hover{
+      background:linear-gradient(135deg,#ff2e54,#ff5b74);
+      transform:translate(-50%,-50%) scale(1.08);
     }
 
-    /*
-     * Volume bar
-     */
-    .player-box .video-js .vjs-volume-level{
-      background:#ff2e54;
+    .player-box .plyr__progress input[type=range]{
+      cursor:pointer;
     }
 
-    /*
-     * Playback speed menu
-     */
-    .player-box .video-js .vjs-menu-button-popup .vjs-menu{
-      left:auto;
-      right:0;
-    }
-
-    .player-box .video-js .vjs-menu-content{
-      padding:7px;
+    .player-box .plyr__menu__container{
       border:1px solid rgba(255,255,255,.1);
-      border-radius:12px;
-      background:rgba(8,12,24,.96);
       backdrop-filter:blur(14px);
-      box-shadow:0 14px 38px rgba(0,0,0,.62);
-    }
-
-    .player-box .video-js .vjs-menu-item{
-      margin:2px 0;
-      padding:8px 15px;
-      border-radius:8px;
-      text-transform:none;
-    }
-
-    .player-box .video-js .vjs-menu-item:hover{
-      background:#1b2744;
-    }
-
-    .player-box .video-js .vjs-menu-item.vjs-selected{
-      color:#fff;
-      background:linear-gradient(
-        135deg,
-        #e50914,
-        #ff2e54
-      );
     }
 
     /*
-     * Tooltip
+     * Video မစသေးတဲ့ ပုံမှန်အခြေအနေမှာ Plyr controls ကို ဖျောက်ထားမယ်။
      */
-    .player-box .video-js .vjs-time-tooltip,
-    .player-box .video-js .vjs-mouse-display .vjs-time-tooltip{
-      padding:5px 8px;
-      border-radius:6px;
-      color:#090d18;
-      background:#eef2ff;
+    .player-box .plyr--video.plyr--stopped .plyr__controls{
+      opacity:0;
+      pointer-events:none;
     }
 
     /*
-     * Video.js ရဲ့ မူရင်း spinner ကို
-     * custom cm-loading spinner သုံးထားတာကြောင့် ဖျောက်မယ်။
+     * Loading ဖြစ်နေချိန်မှာ Plyr က hideControls ကြောင့်
+     * controls ကို စောစောမဖျောက်နိုင်အောင် ထိန်းထားမယ်။
      */
-    .player-box .video-js .vjs-loading-spinner{
-      display:none !important;
-    }
-
-    /*
-     * Loading ဖြစ်နေချိန်မှာ control bar မပျောက်စေရန်
-     */
-    .player-box.is-loading .video-js .vjs-control-bar{
-      display:flex !important;
+    .player-box.is-loading .plyr__controls{
       opacity:1 !important;
       visibility:visible !important;
     }
 
     /*
-     * Custom loading overlay ကို Player အပေါ်ဆုံးမှာထားမယ်။
+     * Spinner overlay က Plyr wrapper ထက် အမြဲအပေါ်မှာရှိစေရန်။
      */
     .player-box.is-loading .cm-loading{
       display:flex;
       z-index:999;
     }
 
-    /*
-     * Fullscreen
-     */
-    .player-box .video-js.vjs-fullscreen{
-      width:100% !important;
-      height:100% !important;
-    }
-
-    /*
-     * Error message
-     */
-    .player-box .video-js .vjs-error-display{
-      background:rgba(0,0,0,.82);
-    }
-
-    .player-box .video-js .vjs-error-display::before{
-      color:#ff5b74;
-    }
-
     @media(max-width:560px){
-      .player-box .video-js .vjs-control-bar{
-        height:4em;
-        padding:0 .15em;
-        font-size:10px;
+      :root{
+        --plyr-control-spacing:8px;
+        --plyr-control-icon-size:17px;
       }
 
-      .player-box .video-js .vjs-control{
-        width:3.2em;
+      .player-box .plyr__controls{
+        padding:32px 7px 7px;
       }
 
-      .player-box .video-js .vjs-big-play-button{
-        width:60px;
-        height:60px;
-        margin-top:-30px;
-        margin-left:-30px;
-        line-height:56px;
+      .player-box .plyr__control--overlaid{
+        width:58px;
+        height:58px;
+        padding:17px;
       }
 
-      .player-box .video-js .vjs-progress-control{
-        left:8px;
-        right:8px;
-      }
-
-      /*
-       * ဖုန်းသေးသေးမှာ volume slider နေရာမလောက်နိုင်တာကြောင့်
-       * volume button ပဲပြမယ်။
-       */
-      .player-box .video-js .vjs-volume-panel.vjs-volume-panel-horizontal{
-        width:3.2em;
-      }
-
-      .player-box .video-js .vjs-volume-panel .vjs-volume-control{
-        display:none;
-      }
-
-      .player-box .video-js .vjs-time-divider,
-      .player-box .video-js .vjs-duration{
-        display:none;
+      .player-box .plyr__volume{
+        min-width:0;
+        width:auto;
       }
     }
     .watch{display:grid;grid-template-columns:1fr;gap:22px;margin:18px 0}
@@ -3900,86 +3708,39 @@ ${footer()}`;
 
   function initPlayer(){
     if(player || playerReady) return;
-
     playerReady=true;
 
-    if(!v){
-      cancelLoading();
-      return;
-    }
-
-    /*
-     * Video.js CDN မတက်ရင် native HTML5 player ကို
-     * fallback အဖြစ် ဆက်သုံးနိုင်အောင် controls ဖွင့်ထားမယ်။
-     */
+    // play နှိပ်မှသာ controls ပါတဲ့ Plyr ကို ဆောက်မယ်
     v.setAttribute('controls','controls');
-    v.setAttribute('playsinline','playsinline');
-    v.setAttribute('webkit-playsinline','webkit-playsinline');
-
-    /*
-     * Right click context menu မှာ source URL မပေါ်အောင်
-     * browser context menu ကို တားထားမယ်။
-     *
-     * ဒါက security အပြည့်မဟုတ်ပေမယ့်
-     * ပုံမှန် user အတွက် link copy လုပ်ရခက်စေတယ်။
-     */
-    v.addEventListener('contextmenu',function(event){
-      event.preventDefault();
-    });
-
-    /*
-     * User ရဲ့ volume / speed setting ကို ပြန်ယူမယ်။
-     */
-    var savedVolume=1;
-    var savedMuted=false;
-    var savedRate=1;
 
     try{
-      var savedSettings=JSON.parse(
-        localStorage.getItem(
-          'cmflix-videojs-settings'
-        ) || '{}'
-      );
+      player=new Plyr(v,{
+        controls:[
+          'play-large',
+          'play',
+          'progress',
+          'current-time',
+          'duration',
+          'mute',
+          'volume',
+          'settings',
+          'pip',
+          'airplay',
+          'fullscreen'
+        ],
 
-      if(
-        typeof savedSettings.volume === 'number' &&
-        savedSettings.volume >= 0 &&
-        savedSettings.volume <= 1
-      ){
-        savedVolume=savedSettings.volume;
-      }
-
-      savedMuted=!!savedSettings.muted;
-
-      if(
-        typeof savedSettings.rate === 'number' &&
-        [
-          0.5,
-          0.75,
-          1,
-          1.25,
-          1.5,
-          1.75,
-          2
-        ].indexOf(savedSettings.rate) !== -1
-      ){
-        savedRate=savedSettings.rate;
-      }
-    }catch(_){}
-
-    try{
-      if(typeof window.videojs === 'function'){
         /*
-         * Video.js player initialize
+         * လက်ရှိမှာ MP4 source တစ်ခုတည်းပဲ သုံးထားလို့
+         * quality menu အလွတ်မပေါ်အောင် ဖယ်ထားတယ်။
          */
-        player=window.videojs(v,{
-          controls:true,
-          autoplay:false,
-          preload:'none',
-          loop:false,
-          muted:savedMuted,
-          volume:savedVolume,
-          playbackRates:[
+        settings:[
+          'speed',
+          'loop'
+        ],
+
+        speed:{
+          selected:1,
+          options:[
             0.5,
             0.75,
             1,
@@ -3987,133 +3748,94 @@ ${footer()}`;
             1.5,
             1.75,
             2
-          ],
-          responsive:true,
-          fluid:false,
-          fill:true,
-          aspectRatio:'16:9',
-          inactivityTimeout:2500,
-          liveui:false,
-          nativeControlsForTouch:false,
-          disablePictureInPicture:false,
-          normalizeAutoplay:false,
-          html5:{
-            nativeAudioTracks:false,
-            nativeVideoTracks:false,
-            vhs:{
-              overrideNative:false
-            }
-          }
-        });
+          ]
+        },
+
+        ratio:'16:9',
+        autoplay:false,
+        autopause:true,
+        playsinline:true,
+        clickToPlay:true,
+        hideControls:true,
+        resetOnEnd:false,
+        disableContextMenu:true,
+        seekTime:10,
 
         /*
-         * Saved playback speed ပြန်သတ်မှတ်
+         * Global keyboard shortcut မသုံးတော့တာကြောင့်
+         * page scroll လုပ်နေချိန် Space/Arrow key မတိုက်ခိုက်တော့ဘူး။
+         * Player ကို focus လုပ်ထားချိန်မှာပဲ shortcut သုံးမယ်။
          */
-        try{
-          player.playbackRate(savedRate);
-        }catch(_){}
-      }
-    }catch(error){
-      player=null;
+        keyboard:{
+          focused:true,
+          global:false
+        },
 
-      console.error(
-        'Video.js initialize failed',
-        error
-      );
-    }
+        tooltips:{
+          controls:true,
+          seek:true
+        },
+
+        fullscreen:{
+          enabled:true,
+          fallback:true,
+          iosNative:true
+        },
+
+        /*
+         * User volume / speed preference ကို browser ထဲမှတ်ထားမယ်။
+         */
+        storage:{
+          enabled:true,
+          key:'cmflix-player'
+        }
+      });
+    }catch(_){}
 
     keepLoadingOnTop();
 
-    /*
-     * Video.js က video ကို wrapper ထဲထည့်ပြီးနောက်
-     * loading overlay ကို player-box ရဲ့အပေါ်ဆုံး ပြန်ထားမယ်။
-     */
-    setTimeout(function(){
-      keepLoadingOnTop();
-    },0);
-
-    setTimeout(function(){
-      keepLoadingOnTop();
-    },100);
-
-    function savePlayerSettings(){
-      if(!player) return;
-
-      try{
-        localStorage.setItem(
-          'cmflix-videojs-settings',
-          JSON.stringify({
-            volume:
-              typeof player.volume === 'function'
-                ? player.volume()
-                : 1,
-
-            muted:
-              typeof player.muted === 'function'
-                ? player.muted()
-                : false,
-
-            rate:
-              typeof player.playbackRate === 'function'
-                ? player.playbackRate()
-                : 1
-          })
-        );
-      }catch(_){}
+    function firstFrameReady(){
+      /*
+       * playing event ရောက်ရုံနဲ့ ချက်ချင်းမဖျောက်ဘူး။
+       * requestVideoFrameCallback နဲ့ actual rendered frame ကို စောင့်မယ်။
+       */
+      finishLoadingAfterPaint();
     }
 
-    /*
-     * Video.js အလုပ်လုပ်ရင် Video.js events သုံးမယ်။
-     */
-    if(player){
-      player.ready(function(){
-        keepLoadingOnTop();
-
-        try{
-          player.volume(savedVolume);
-          player.muted(savedMuted);
-          player.playbackRate(savedRate);
-        }catch(_){}
-      });
-
+    function videoStartedProgressing(){
       /*
-       * Fullscreen ဝင်/ထွက်တဲ့အချိန်
-       * ဖုန်းကို landscape လှည့်နိုင်ရင် လှည့်မယ်။
+       * Browser တချို့မှာ playing event အရင်ရောက်ပြီး
+       * requestVideoFrameCallback နောက်ကျနိုင်တာအတွက် safety check။
+       *
+       * currentTime တကယ်ရွေ့မှသာ frame finish စစ်မယ်။
        */
-      player.on('fullscreenchange',function(){
-        try{
-          if(player.isFullscreen()){
-            if(
-              screen.orientation &&
-              screen.orientation.lock
-            ){
-              var orientationPromise=
-                screen.orientation.lock(
-                  'landscape'
-                );
+      if(
+        v &&
+        v.readyState >= 2 &&
+        Number(v.currentTime || 0) > 0
+      ){
+        finishLoadingAfterPaint();
+      }
+    }
 
-              if(
-                orientationPromise &&
-                orientationPromise.catch
-              ){
-                orientationPromise.catch(
-                  function(){}
-                );
-              }
-            }
-          }else{
-            if(
-              screen.orientation &&
-              screen.orientation.unlock
-            ){
-              screen.orientation.unlock();
-            }
-          }
-        }catch(_){}
+    if(player){
+      player.on('enterfullscreen',function(){
+        if(screen.orientation && screen.orientation.lock){
+          screen.orientation
+            .lock('landscape')
+            .catch(function(){});
+        }
+      });
+
+      player.on('exitfullscreen',function(){
+        if(screen.orientation && screen.orientation.unlock){
+          screen.orientation.unlock();
+        }
       });
 
       /*
-       * Source စ load လုပ်ချိန်၊ buffering နဲ့ seek လုပ်ချိန်
+       * Source စ load လုပ်ချိန်၊ internet စောင့်ချိန်၊
+       * seek လုပ်ချိန်မှာ spinner ပြမယ်။
        */
       player.on('loadstart',function(){
         keepLoadingOnTop();
@@ -4136,7 +3858,8 @@ ${footer()}`;
       });
 
       /*
-       * Video frame/data အသင့်ဖြစ်တဲ့ events
+       * Playback ပြန်စတာ၊ seek ပြီးတာ၊
+       * data/frame အသင့်ဖြစ်တာနဲ့ spinner ဖျောက်ဖို့စစ်မယ်။
        */
       player.on('playing',function(){
         finishLoadingAfterPaint();
@@ -4160,6 +3883,10 @@ ${footer()}`;
         finishLoadingAfterPaint();
       });
 
+      /*
+       * Browser တချို့မှာ seeked/playing event နောက်ကျတာအတွက်
+       * currentTime ပြန်ရွေ့တာနဲ့ ထပ်စစ်မယ်။
+       */
       player.on('timeupdate',function(){
         if(
           v &&
@@ -4170,6 +3897,10 @@ ${footer()}`;
         }
       });
 
+      /*
+       * User က buffering ဖြစ်နေချိန် Pause နှိပ်ထားရင်လည်း
+       * frame အသင့်ရှိနေသရွေ့ spinner ကို မထားတော့ပါ။
+       */
       player.on('pause',function(){
         if(
           v &&
@@ -4186,296 +3917,20 @@ ${footer()}`;
 
       player.on('error',function(){
         cancelLoading();
-
-        var message='Video ဖွင့်လို့မရပါ';
-
-        try{
-          var playerError=player.error();
-
-          if(
-            playerError &&
-            playerError.message
-          ){
-            message=playerError.message;
-          }
-        }catch(_){}
-
-        console.error(
-          'Video.js playback error:',
-          message
-        );
-
-        showToast(
-          'Video ဖွင့်လို့မရပါ။ ပြန်စမ်းကြည့်ပါ။'
-        );
       });
 
-      /*
-       * User setting ပြောင်းတိုင်း browser ထဲမှတ်
-       */
-      player.on(
-        'volumechange',
-        savePlayerSettings
-      );
-
-      player.on(
-        'ratechange',
-        savePlayerSettings
-      );
-
-      /*
-       * Gate ဖြစ်နေတဲ့ user က Player ထဲက play button
-       * တိုက်ရိုက်နှိပ်ရင် Login/Account ဆီပို့မယ်။
-       */
       if(GATED){
         player.on('play',function(){
-          try{
-            player.pause();
-          }catch(_){}
-
+          player.pause();
           cancelLoading();
           gateMsg();
         });
       }
-    }else{
+    }else if(v){
       /*
-       * Video.js CDN မတက်ရင် native HTML5 video fallback
+       * Plyr CDN မတက်လို့ native video ဖြစ်သွားရင်လည်း
+       * spinner logic တူတူသုံးမယ်။
        */
-      v.addEventListener('loadstart',function(){
-        keepLoadingOnTop();
-        showLoading();
-      });
-
-      v.addEventListener('waiting',function(){
-        keepLoadingOnTop();
-        showLoading();
-      });
-
-      v.addEventListener('seeking',function(){
-        keepLoadingOnTop();
-        showLoading();
-      });
-
-      v.addEventListener('stalled',function(){
-        keepLoadingOnTop();
-        showLoading();
-      });
-
-      v.addEventListener('playing',function(){
-        finishLoadingAfterPaint();
-      });
-
-      v.addEventListener('canplay',function(){
-        finishLoadingAfterPaint();
-      });
-
-      v.addEventListener('canplaythrough',function(){
-        finishLoadingAfterPaint();
-      });
-
-      v.addEventListener('loadeddata',function(){
-        if(v.readyState >= 2){
-          finishLoadingAfterPaint();
-        }
-      });
-
-      v.addEventListener('seeked',function(){
-        finishLoadingAfterPaint();
-      });
-
-      v.addEventListener('timeupdate',function(){
-        if(
-          v.readyState >= 2 &&
-          !v.seeking
-        ){
-          finishLoadingAfterPaint();
-        }
-      });
-
-      v.addEventListener('pause',function(){
-        if(
-          v.readyState >= 2 &&
-          !v.seeking
-        ){
-          finishLoadingAfterPaint();
-        }
-      });
-
-      v.addEventListener('ended',function(){
-        cancelLoading();
-      });
-
-      v.addEventListener('error',function(){
-        cancelLoading();
-
-        showToast(
-          'Video ဖွင့်လို့မရပါ။ ပြန်စမ်းကြည့်ပါ။'
-        );
-      });
-    }
-
-    /*
-     * Player ကို focus လုပ်ထားချိန်မှာပဲ
-     * keyboard shortcut သုံးနိုင်မယ်။
-     *
-     * Space = Play/Pause
-     * Left/Right = 10 seconds
-     * Up/Down = Volume
-     * F = Fullscreen
-     * M = Mute
-     */
-    var keyboardTarget=
-      player && player.el
-        ? player.el()
-        : v;
-
-    if(keyboardTarget){
-      keyboardTarget.setAttribute(
-        'tabindex',
-        '0'
-      );
-
-      keyboardTarget.addEventListener(
-        'keydown',
-        function(event){
-          if(!player || GATED) return;
-
-          var tagName=String(
-            event.target &&
-            event.target.tagName ||
-            ''
-          ).toLowerCase();
-
-          if(
-            tagName === 'input' ||
-            tagName === 'textarea' ||
-            tagName === 'select' ||
-            tagName === 'button'
-          ){
-            return;
-          }
-
-          var key=String(
-            event.key || ''
-          ).toLowerCase();
-
-          if(
-            key === ' ' ||
-            key === 'k'
-          ){
-            event.preventDefault();
-
-            if(player.paused()){
-              var playPromise=player.play();
-
-              if(
-                playPromise &&
-                playPromise.catch
-              ){
-                playPromise.catch(
-                  function(){}
-                );
-              }
-            }else{
-              player.pause();
-            }
-
-            return;
-          }
-
-          if(key === 'arrowleft'){
-            event.preventDefault();
-
-            player.currentTime(
-              Math.max(
-                0,
-                Number(
-                  player.currentTime() || 0
-                ) - 10
-              )
-            );
-
-            return;
-          }
-
-          if(key === 'arrowright'){
-            event.preventDefault();
-
-            var duration=Number(
-              player.duration() || 0
-            );
-
-            var nextTime=
-              Number(
-                player.currentTime() || 0
-              ) + 10;
-
-            player.currentTime(
-              duration > 0
-                ? Math.min(
-                    duration,
-                    nextTime
-                  )
-                : nextTime
-            );
-
-            return;
-          }
-
-          if(key === 'arrowup'){
-            event.preventDefault();
-
-            player.volume(
-              Math.min(
-                1,
-                Number(
-                  player.volume() || 0
-                ) + 0.1
-              )
-            );
-
-            return;
-          }
-
-          if(key === 'arrowdown'){
-            event.preventDefault();
-
-            player.volume(
-              Math.max(
-                0,
-                Number(
-                  player.volume() || 0
-                ) - 0.1
-              )
-            );
-
-            return;
-          }
-
-          if(key === 'm'){
-            event.preventDefault();
-
-            player.muted(
-              !player.muted()
-            );
-
-            return;
-          }
-
-          if(key === 'f'){
-            event.preventDefault();
-
-            if(player.isFullscreen()){
-              player.exitFullscreen();
-            }else{
-              player.requestFullscreen();
-            }
-          }
-        }
-      );
-    }
-  }
-
       v.addEventListener('loadstart',function(){
         keepLoadingOnTop();
         showLoading();
@@ -4593,105 +4048,31 @@ ${footer()}`;
     keepLoadingOnTop();
     showLoading();
 
-    var currentSrc='';
-
+    // source တူနေရင် ထပ်ပြီး reset မလုပ်ပါ — ပထမ Play မှာ flicker/black ဖြစ်တာ လျော့စေတယ်
+    var currentSrc = '';
     try{
-      if(
-        player &&
-        typeof player.currentSrc === 'function'
-      ){
-        currentSrc=
-          player.currentSrc() || '';
-      }else if(v){
-        currentSrc=
-          v.currentSrc ||
-          v.getAttribute('src') ||
-          '';
-      }
+      currentSrc = v ? (v.currentSrc || v.getAttribute('src') || '') : '';
     }catch(_){}
 
-    /*
-     * Source တူရင် player ကို reset မလုပ်တော့ပါ။
-     * ဒါမှ ပထမ Play နှိပ်တဲ့အခါ flicker/black screen လျော့မယ်။
-     */
-    if(
-      currentSrc &&
-      currentSrc === video
-    ){
+    if(currentSrc && currentSrc === video){
       return;
     }
 
-    /*
-     * URL extension ကိုကြည့်ပြီး MIME type ခန့်မှန်းမယ်။
-     * လက်ရှိ MP4 အဓိကဖြစ်ပေမယ့် HLS .m3u8 ကိုလည်း
-     * Video.js နဲ့ဖွင့်နိုင်အောင် ထည့်ထားသည်။
-     */
-    var cleanUrl=String(video)
-      .split('#')[0]
-      .split('?')[0]
-      .toLowerCase();
-
-    var sourceType=
-      cleanUrl.endsWith('.m3u8')
-        ? 'application/x-mpegURL'
-        : cleanUrl.endsWith('.webm')
-          ? 'video/webm'
-          : 'video/mp4';
-
-    if(
-      player &&
-      typeof player.src === 'function'
-    ){
-      try{
-        /*
-         * Episode အသစ်ပြောင်းတဲ့အခါ
-         * အရင် playback ကိုခဏရပ်မယ်။
-         */
-        player.pause();
-
-        player.src({
-          src:video,
-          type:sourceType
-        });
-
-        /*
-         * preload:none ဖြစ်ပေမယ့် user က Play/Episode
-         * နှိပ်ပြီးမှ ဒီ function ခေါ်တာဖြစ်လို့ load လုပ်မယ်။
-         */
-        player.load();
-      }catch(error){
-        console.error(
-          'Video.js source error',
-          error
-        );
-
-        cancelLoading();
-
-        showToast(
-          'Video source ပြောင်းလို့မရပါ'
-        );
-
-        return;
-      }
-    }else if(v){
-      /*
-       * Video.js မတက်ရင် native video fallback
-       */
+    if(player){
+      player.source={
+        type:'video',
+        sources:[{src:video,type:'video/mp4'}]
+      };
+    } else if(v){
       v.src=video;
-
-      if(v.load){
-        v.load();
-      }
+      if(v.load) v.load();
     }
 
-    /*
-     * Source set ပြီးပြီးချင်း browser event မလာသေးရင်လည်း
-     * spinner ဆက်ပြနေစေရန်။
-     */
+    // source set ပြီးပြီးချင်း event မလာသေးတဲ့ browser တွေအတွက် spinner ထပ်ပြ
     setTimeout(function(){
       keepLoadingOnTop();
       showLoading();
-    },50);
+    }, 50);
   }
 
   function setSource(video, dl, title){
@@ -5007,15 +4388,7 @@ document
   }
 })();`;
 
-  return pageShell(
-    (item.title || "Watch") + " — CM FLIX",
-    body,
-    {
-      extraCss,
-      script,
-      videojs: true
-    }
-  );
+  return pageShell((item.title || "Watch") + " — CM FLIX", body, { extraCss, script, plyr: true });
 }
 
 /* ══════════════════════════════════════════════════
