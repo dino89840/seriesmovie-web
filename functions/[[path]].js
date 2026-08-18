@@ -2099,7 +2099,7 @@ function rewriteDomain(rawUrl) {
 /* ── PART 1 ends here. PART 2 uses everything above ── */
 // functions/[[path]].js  — PART 2 of 2  (append directly below PART 1)
 // ════════════════════════════════════════════════════════════════
-//  CM FLIX — UI, routes, signed-stream player (Plyr), admin panel
+//  CM FLIX — UI, routes, signed-stream player (Video.js), admin panel
 // ════════════════════════════════════════════════════════════════
 
 /* ══════════════════════════════════════════════════
@@ -2263,11 +2263,11 @@ function brandLogo() {
    SECURE HTML RESPONSE HELPER
    ══════════════════════════════════════════════════ */
 // ── Content-Security-Policy — inline script/style သုံးထားလို့ 'unsafe-inline' ထည့်ရ ──
-//    ပြင်ပ resource — Plyr CDN, TMDB images, actress images, video source တွေကို ခွင့်ပြု
+//    ပြင်ပ resource — Video.js CDN, TMDB images, actress images, video source တွေကို ခွင့်ပြု
 const CSP_POLICY = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' https://cdn.plyr.io",
-  "style-src 'self' 'unsafe-inline' https://cdn.plyr.io",
+  "script-src 'self' 'unsafe-inline' https://vjs.zencdn.net",
+  "style-src 'self' 'unsafe-inline' https://vjs.zencdn.net",
   "img-src 'self' data: https: blob:",
   "media-src 'self' blob: https:",
   "connect-src 'self' https:",
@@ -2423,9 +2423,9 @@ async function cachedHtml(context, request, ttlSec, builder) {
 
 
 
-// Plyr CDN — latest stable player
-const PLYR_CSS_CDN = "https://cdn.plyr.io/3.8.4/plyr.css";
-const PLYR_JS_CDN  = "https://cdn.plyr.io/3.8.4/plyr.polyfilled.js";
+// Video.js CDN — latest stable player (industry standard, used by YouTube-scale sites)
+const VIDEOJS_CSS_CDN = "https://vjs.zencdn.net/8.10.0/video-js.css";
+const VIDEOJS_JS_CDN  = "https://vjs.zencdn.net/8.10.0/video.min.js";
 
 function pageShell(title, body, opts = {}) {
   return `<!doctype html>
@@ -2436,12 +2436,12 @@ function pageShell(title, body, opts = {}) {
 <meta name="robots" content="noindex,nofollow">
 <meta name="theme-color" content="#05070f">
 <title>${htmlEscape(title)}</title>
-${opts.plyr ? `<link rel="stylesheet" href="${PLYR_CSS_CDN}">` : ""}
+${opts.player ? `<link rel="stylesheet" href="${VIDEOJS_CSS_CDN}">` : ""}
 <style>${CMFLIX_CSS}${opts.extraCss || ""}</style>
 </head>
 <body>
 ${body}
-${opts.plyr ? `<script src="${PLYR_JS_CDN}"></script>` : ""}
+${opts.player ? `<script src="${VIDEOJS_JS_CDN}"></script>` : ""}
 ${opts.script ? `<script>${opts.script}</script>` : ""}
 </body></html>`;
 }
@@ -2865,10 +2865,8 @@ ${footer()}`;
   `;
   return pageShell((actress.name || "Actress") + " — CM FLIX", body, { extraCss: css });
 }
-
-
 /* ══════════════════════════════════════════════════
-   WATCH PAGE  — Plyr player, signed stream URLs only
+   WATCH PAGE  — Video.js player, signed stream URLs only
    ══════════════════════════════════════════════════ */
 function watchPage(
   item,
@@ -2956,8 +2954,9 @@ function watchPage(
       <div class="player-box">
         <video
           id="cmPlayer"
+          class="video-js vjs-cmflix vjs-big-play-centered"
           playsinline
-          crossorigin
+          crossorigin="anonymous"
           preload="none"
           poster="${posterImg}"
         ></video>
@@ -2994,8 +2993,9 @@ function watchPage(
       <div class="player-box">
         <video
           id="cmPlayer"
+          class="video-js vjs-cmflix vjs-big-play-centered"
           playsinline
-          crossorigin
+          crossorigin="anonymous"
           preload="none"
           poster="${posterImg}"
           data-video="${htmlEscape(st.video || "")}"
@@ -3030,95 +3030,156 @@ function watchPage(
     </div>` : "";
 
   const extraCss = `
-    :root{
-      --plyr-color-main:#ff2e54;
-      --plyr-video-background:#000;
-      --plyr-video-control-color:#fff;
-      --plyr-video-control-color-hover:#fff;
-      --plyr-video-control-background-hover:#ff2e54;
-      --plyr-video-controls-background:linear-gradient(
+    /* ── Video.js CM FLIX theme (Netflix-inspired dark) ── */
+    .video-js.vjs-cmflix{
+      width:100%;
+      height:100%;
+      font-family:inherit;
+      background:#000;
+    }
+
+    .video-js.vjs-cmflix .vjs-tech{
+      object-fit:contain;
+    }
+
+    /* Big play button (center overlay) */
+    .video-js.vjs-cmflix .vjs-big-play-button{
+      width:78px;
+      height:78px;
+      line-height:78px;
+      border-radius:50%;
+      border:2px solid rgba(255,255,255,.22);
+      background:linear-gradient(135deg,#e50914,#ff2e54);
+      box-shadow:
+        0 10px 35px rgba(229,9,20,.55),
+        inset 0 1px 0 rgba(255,255,255,.25);
+      top:50%;
+      left:50%;
+      margin:-39px 0 0 -39px;
+      font-size:36px;
+      transition:transform .18s ease,background .18s ease;
+    }
+
+    .video-js.vjs-cmflix:hover .vjs-big-play-button,
+    .video-js.vjs-cmflix .vjs-big-play-button:focus{
+      background:linear-gradient(135deg,#ff2e54,#ff5b74);
+      transform:scale(1.08);
+      border-color:rgba(255,255,255,.4);
+    }
+
+    .video-js.vjs-cmflix .vjs-big-play-button .vjs-icon-placeholder:before{
+      line-height:74px;
+    }
+
+    /* Control bar */
+    .video-js.vjs-cmflix .vjs-control-bar{
+      background:linear-gradient(
         180deg,
         transparent 0%,
-        rgba(0,0,0,.16) 20%,
+        rgba(0,0,0,.2) 25%,
         rgba(0,0,0,.92) 100%
       );
-      --plyr-menu-background:rgba(10,14,26,.96);
-      --plyr-menu-color:#eef2ff;
-      --plyr-menu-radius:12px;
-      --plyr-menu-shadow:0 12px 32px rgba(0,0,0,.55);
-      --plyr-tooltip-background:#eef2ff;
-      --plyr-tooltip-color:#090d18;
-      --plyr-tooltip-radius:7px;
-      --plyr-control-radius:9px;
-      --plyr-control-icon-size:19px;
-      --plyr-control-spacing:11px;
-      --plyr-range-track-height:5px;
-      --plyr-range-thumb-height:14px;
-      --plyr-progress-loading-background:rgba(255,255,255,.24);
-      --plyr-video-progress-buffered-background:rgba(255,255,255,.25);
-      --plyr-font-family:inherit;
+      height:52px;
+      padding:0 8px;
+      font-size:14px;
     }
 
-    .player-box .plyr__controls{
-      padding:38px 14px 12px;
+    .video-js.vjs-cmflix .vjs-button > .vjs-icon-placeholder:before{
+      font-size:22px;
+      line-height:52px;
     }
 
-    .player-box .plyr__control{
-      transition:
-        background-color .16s ease,
-        color .16s ease,
-        transform .16s ease;
+    .video-js.vjs-cmflix .vjs-control:focus,
+    .video-js.vjs-cmflix .vjs-control:hover{
+      color:#ff5b74;
+      text-shadow:0 0 8px rgba(229,9,20,.6);
     }
 
-    .player-box .plyr__control:hover{
-      transform:scale(1.06);
+    /* Progress bar */
+    .video-js.vjs-cmflix .vjs-progress-control{
+      height:52px;
     }
 
-    .player-box .plyr__control--overlaid{
-      width:68px;
-      height:68px;
-      padding:20px;
-      color:#fff;
-      background:linear-gradient(135deg,#e50914,#ff2e54);
-      border:2px solid rgba(255,255,255,.22);
-      box-shadow:
-        0 10px 35px rgba(229,9,20,.5),
-        inset 0 1px 0 rgba(255,255,255,.25);
+    .video-js.vjs-cmflix .vjs-play-progress{
+      background:linear-gradient(90deg,#e50914,#ff2e54);
     }
 
-    .player-box .plyr__control--overlaid:hover{
-      background:linear-gradient(135deg,#ff2e54,#ff5b74);
-      transform:translate(-50%,-50%) scale(1.08);
+    .video-js.vjs-cmflix .vjs-play-progress:before{
+      color:#ff2e54;
+      font-size:14px;
+      top:-5px;
     }
 
-    .player-box .plyr__progress input[type=range]{
-      cursor:pointer;
+    .video-js.vjs-cmflix .vjs-load-progress{
+      background:rgba(255,255,255,.28);
     }
 
-    .player-box .plyr__menu__container{
+    .video-js.vjs-cmflix .vjs-load-progress div{
+      background:rgba(255,255,255,.22);
+    }
+
+    .video-js.vjs-cmflix .vjs-slider{
+      background:rgba(255,255,255,.18);
+    }
+
+    /* Volume panel */
+    .video-js.vjs-cmflix .vjs-volume-level{
+      background:linear-gradient(90deg,#e50914,#ff2e54);
+    }
+
+    .video-js.vjs-cmflix .vjs-volume-panel .vjs-volume-control{
+      background:rgba(10,14,26,.9);
+      border-radius:8px;
+    }
+
+    /* Time display */
+    .video-js.vjs-cmflix .vjs-time-control{
+      line-height:52px;
+      font-weight:600;
+      color:#eef2ff;
+      padding:0 6px;
+      min-width:auto;
+    }
+
+    /* Playback rate & menus */
+    .video-js.vjs-cmflix .vjs-menu-button-popup .vjs-menu{
+      bottom:52px;
+    }
+
+    .video-js.vjs-cmflix .vjs-menu-button-popup .vjs-menu .vjs-menu-content{
+      background:rgba(10,14,26,.96);
       border:1px solid rgba(255,255,255,.1);
+      border-radius:12px;
       backdrop-filter:blur(14px);
+      box-shadow:0 12px 32px rgba(0,0,0,.55);
+      padding:6px 0;
+    }
+
+    .video-js.vjs-cmflix .vjs-menu li{
+      color:#eef2ff;
+      font-size:13px;
+      padding:8px 16px;
+      transition:background .12s;
+    }
+
+    .video-js.vjs-cmflix .vjs-menu li.vjs-selected,
+    .video-js.vjs-cmflix .vjs-menu li:hover{
+      background:linear-gradient(135deg,#e50914,#ff2e54);
+      color:#fff;
+    }
+
+    /* Loading spinner (Video.js built-in) — hide (we use our custom cm-loading) */
+    .video-js.vjs-cmflix .vjs-loading-spinner{
+      display:none !important;
+    }
+
+    /* Hide when video not started */
+    .video-js.vjs-cmflix.vjs-paused.vjs-has-started .vjs-control-bar{
+      opacity:1;
     }
 
     /*
-     * Video မစသေးတဲ့ ပုံမှန်အခြေအနေမှာ Plyr controls ကို ဖျောက်ထားမယ်။
-     */
-    .player-box .plyr--video.plyr--stopped .plyr__controls{
-      opacity:0;
-      pointer-events:none;
-    }
-
-    /*
-     * Loading ဖြစ်နေချိန်မှာ Plyr က hideControls ကြောင့်
-     * controls ကို စောစောမဖျောက်နိုင်အောင် ထိန်းထားမယ်။
-     */
-    .player-box.is-loading .plyr__controls{
-      opacity:1 !important;
-      visibility:visible !important;
-    }
-
-    /*
-     * Spinner overlay က Plyr wrapper ထက် အမြဲအပေါ်မှာရှိစေရန်။
+     * Loading state — force spinner overlay visible
      */
     .player-box.is-loading .cm-loading{
       display:flex;
@@ -3126,30 +3187,40 @@ function watchPage(
     }
 
     @media(max-width:560px){
-      :root{
-        --plyr-control-spacing:8px;
-        --plyr-control-icon-size:17px;
+      .video-js.vjs-cmflix .vjs-big-play-button{
+        width:64px;
+        height:64px;
+        line-height:64px;
+        margin:-32px 0 0 -32px;
+        font-size:28px;
       }
 
-      .player-box .plyr__controls{
-        padding:32px 7px 7px;
+      .video-js.vjs-cmflix .vjs-big-play-button .vjs-icon-placeholder:before{
+        line-height:60px;
       }
 
-      .player-box .plyr__control--overlaid{
-        width:58px;
-        height:58px;
-        padding:17px;
+      .video-js.vjs-cmflix .vjs-control-bar{
+        height:44px;
       }
 
-      .player-box .plyr__volume{
-        min-width:0;
-        width:auto;
+      .video-js.vjs-cmflix .vjs-button > .vjs-icon-placeholder:before{
+        font-size:19px;
+        line-height:44px;
+      }
+
+      .video-js.vjs-cmflix .vjs-time-control{
+        line-height:44px;
+        font-size:12px;
+      }
+
+      .video-js.vjs-cmflix .vjs-progress-control{
+        height:44px;
       }
     }
+
     .watch{display:grid;grid-template-columns:1fr;gap:22px;margin:18px 0}
     @media(min-width:900px){ .watch.has-info{grid-template-columns:1fr 330px} }
     .player-box{position:relative;background:#000;border-radius:0;overflow:hidden;aspect-ratio:16/9;box-shadow:0 14px 40px rgba(0,0,0,.65)}
-    .player-box .plyr{height:100%;border-radius:0}
     .player-box video{width:100%;height:100%;background:#000;object-fit:contain;display:block}
     .poster-cover{position:absolute;inset:0;z-index:10;cursor:pointer;background-size:cover;background-position:center center;background-repeat:no-repeat;background-color:#080c18;display:flex;align-items:center;justify-content:center;transition:opacity .25s}
     .poster-cover.hide{display:none}
@@ -3368,7 +3439,6 @@ ${footer()}`;
   var v=document.getElementById('cmPlayer');
   var btnPlay=document.getElementById('btnPlay');
   var btnDl=document.getElementById('btnDl');
-  var emptyEl=document.getElementById('playerEmpty');
   var nowEl=document.getElementById('nowPlaying');
   var loadEl=document.getElementById('cmLoading');
 
@@ -3381,10 +3451,6 @@ ${footer()}`;
   /*
    * Series ရဲ့ ပထမ Episode signed link ကို
    * page စတက်လာတာနဲ့ browser cache ထဲ ကြိုထည့်မယ်။
-   *
-   * ဒါကြောင့်:
-   * - ပထမ Episode button နှိပ်ရင် API request မစောင့်ရ
-   * - Series Play button ကို တန်းနှိပ်ရင် Movie လိုဖွင့်နိုင်
    */
   if(
     INITIAL_SERIES_STREAM &&
@@ -3417,18 +3483,10 @@ ${footer()}`;
         INITIAL_SERIES_STREAM.video ||
         '',
 
-      /*
-       * ဒီအချိန်မှာ server ကနေ အသစ်ရောက်လာတဲ့
-       * signed link ဖြစ်တာကြောင့် Date.now() သုံးမယ်။
-       */
       savedAt:
         Date.now()
     };
 
-    /*
-     * Series Play button ကို Episode မရွေးဘဲ
-     * နှိပ်ရင် ပထမ Episode တန်းဖွင့်နိုင်စေရန်။
-     */
     cur.video =
       INITIAL_SERIES_STREAM.video ||
       '';
@@ -3446,21 +3504,7 @@ ${footer()}`;
   // ── Video loading / seek spinner controller ──
   var loadingSince=0;
   var loadingHideTimer=null;
-  var loadingPaintTimer=null;
-  var loadingCycle=0;
-  var pendingFinishCycle=-1;
-
-  /*
-   * Spinner ခဏလေး flash ဖြစ်ပြီးပျောက်တာ မဖြစ်အောင်
-   * အနည်းဆုံး 350ms ပြမယ်။
-   */
   var MIN_LOADING_MS=350;
-
-  /*
-   * requestVideoFrameCallback မအလုပ်လုပ်တဲ့ browser တွေအတွက်
-   * fallback စောင့်ချိန်။
-   */
-  var PAINT_FALLBACK_MS=900;
 
   function getPlayerBox(){
     return document.querySelector('.player-box');
@@ -3469,50 +3513,23 @@ ${footer()}`;
   function keepLoadingOnTop(){
     try{
       var box=getPlayerBox();
-
-      /*
-       * Plyr က video ကို wrapper ထဲရွှေ့နိုင်တာကြောင့်
-       * spinner ကို player-box ရဲ့ နောက်ဆုံး child အဖြစ်ထားမယ်။
-       */
       if(box && loadEl && loadEl.parentNode !== box){
         box.appendChild(loadEl);
       }
-
       if(loadEl){
         loadEl.style.zIndex='999';
       }
     }catch(_){}
   }
 
-  function clearLoadingTimers(){
+  function showLoading(){
+    if(!loadEl) return;
+
     if(loadingHideTimer){
       clearTimeout(loadingHideTimer);
       loadingHideTimer=null;
     }
 
-    if(loadingPaintTimer){
-      clearTimeout(loadingPaintTimer);
-      loadingPaintTimer=null;
-    }
-  }
-
-  function showLoading(){
-    if(!loadEl) return;
-
-    clearLoadingTimers();
-
-    /*
-     * waiting / seeking / stalled အသစ်ဖြစ်တိုင်း
-     * အရင် frame callback ကို invalid လုပ်မယ်။
-     */
-    loadingCycle++;
-    pendingFinishCycle=-1;
-
-    /*
-     * Spinner မပေါ်သေးတဲ့အချိန်မှ စတင်ချိန် အသစ်ယူမယ်။
-     * event တစ်ခုချင်းစီကြောင့် loadingSince ကို
-     * အမြဲ reset မလုပ်တော့ပါ။
-     */
     if(!loadEl.classList.contains('show')){
       loadingSince=Date.now();
     }
@@ -3526,171 +3543,46 @@ ${footer()}`;
     }
   }
 
-  /*
-   * Error / play reject / video ended ဖြစ်ရင်
-   * spinner ကို ချက်ချင်းဖျောက်မယ်။
-   */
-  function cancelLoading(){
-    loadingCycle++;
-    pendingFinishCycle=-1;
+  function hideLoading(force){
+    if(!loadEl) return;
 
-    clearLoadingTimers();
-
-    if(loadEl){
-      loadEl.classList.remove('show');
-    }
-
-    var box=getPlayerBox();
-    if(box){
-      box.classList.remove('is-loading');
-    }
-  }
-
-  function removeLoadingOverlay(cycle){
-    if(cycle !== loadingCycle){
-      return;
-    }
-
-    if(!v || v.readyState < 2){
-      pendingFinishCycle=-1;
-      return;
-    }
-
-    /*
-     * Seek မပြီးသေးရင် မဖျောက်သေးဘူး။
-     * seeked / playing / canplay event ပြန်လာရင် ထပ်စစ်မယ်။
-     */
-    if(v.seeking){
-      pendingFinishCycle=-1;
-      return;
-    }
-
-    if(loadEl){
-      loadEl.classList.remove('show');
-    }
-
-    var box=getPlayerBox();
-    if(box){
-      box.classList.remove('is-loading');
-    }
-
-    /*
-     * ပထမဆုံး video frame အသင့်ဖြစ်ပြီဆိုမှ
-     * poster cover ကို ဖျောက်မယ်။
-     */
-    if(coverEl){
-      coverEl.classList.add('hide');
-    }
-
-    clearLoadingTimers();
-    pendingFinishCycle=-1;
-  }
-
-  /*
-   * Video frame အသင့်ဖြစ်ပြီးနောက် spinner ဖျောက်မယ်။
-   *
-   * requestVideoFrameCallback ရှိရင် actual frame ကိုစောင့်မယ်။
-   * callback မလာတဲ့ browser တွေမှာ fallback timer နဲ့ဖျောက်မယ်။
-   */
-  function finishLoadingAfterPaint(){
-    if(!loadEl || !loadEl.classList.contains('show')){
-      return;
-    }
-
-    if(!v || v.readyState < 2){
-      return;
-    }
-
-    var cycle=loadingCycle;
-
-    /*
-     * timeupdate အကြိမ်ကြိမ်လာရင် hide timer ကို
-     * ထပ်ခါထပ်ခါ reset မလုပ်စေရန်။
-     */
-    if(pendingFinishCycle === cycle){
-      return;
-    }
-
-    pendingFinishCycle=cycle;
-
-    var completed=false;
-
-    function frameReady(){
-      if(completed){
-        return;
-      }
-
-      completed=true;
-
-      if(loadingPaintTimer){
-        clearTimeout(loadingPaintTimer);
-        loadingPaintTimer=null;
-      }
-
-      if(cycle !== loadingCycle){
-        if(pendingFinishCycle === cycle){
-          pendingFinishCycle=-1;
-        }
-        return;
-      }
-
-      if(!v || v.readyState < 2 || v.seeking){
-        pendingFinishCycle=-1;
-        return;
-      }
-
-      var elapsed=Date.now()-(loadingSince || Date.now());
-      var wait=Math.max(0,MIN_LOADING_MS-elapsed);
-
+    if(force){
       if(loadingHideTimer){
         clearTimeout(loadingHideTimer);
+        loadingHideTimer=null;
       }
-
-      loadingHideTimer=setTimeout(function(){
-        removeLoadingOverlay(cycle);
-      },wait);
-    }
-
-    /*
-     * callback မလာဘဲ spinner မပျောက်တော့တာကို
-     * ကာကွယ်ရန် fallback timer အမြဲထားမယ်။
-     */
-    loadingPaintTimer=setTimeout(function(){
-      frameReady();
-    },PAINT_FALLBACK_MS);
-
-    if(
-      typeof v.requestVideoFrameCallback === 'function'
-    ){
-      try{
-        v.requestVideoFrameCallback(function(){
-          frameReady();
-        });
-        return;
-      }catch(_){}
-    }
-
-    requestAnimationFrame(function(){
-      requestAnimationFrame(function(){
-        frameReady();
-      });
-    });
-  }
-
-  /*
-   * မူရင်းအောက်ပိုင်းမှာ hideLoading(true/false)
-   * ခေါ်ထားတာတွေ ဆက်အလုပ်လုပ်ရန်။
-   */
-  function hideLoading(force){
-    if(force){
-      cancelLoading();
+      loadEl.classList.remove('show');
+      var box=getPlayerBox();
+      if(box){
+        box.classList.remove('is-loading');
+      }
+      if(coverEl){
+        coverEl.classList.add('hide');
+      }
       return;
     }
 
-    finishLoadingAfterPaint();
+    var elapsed=Date.now()-(loadingSince || Date.now());
+    var wait=Math.max(0, MIN_LOADING_MS-elapsed);
+
+    if(loadingHideTimer){
+      clearTimeout(loadingHideTimer);
+    }
+
+    loadingHideTimer=setTimeout(function(){
+      loadEl.classList.remove('show');
+      var box=getPlayerBox();
+      if(box){
+        box.classList.remove('is-loading');
+      }
+      if(coverEl){
+        coverEl.classList.add('hide');
+      }
+      loadingHideTimer=null;
+    }, wait);
   }
 
-  // ── Custom toast box (browser alert အစား) ──
+  // ── Custom toast box ──
   var toastEl=document.getElementById('cmToast');
   var toastTxEl=document.getElementById('cmToastTx');
   var toastTimer=null;
@@ -3710,331 +3602,116 @@ ${footer()}`;
     if(player || playerReady) return;
     playerReady=true;
 
-    // play နှိပ်မှသာ controls ပါတဲ့ Plyr ကို ဆောက်မယ်
-    v.setAttribute('controls','controls');
+    if(typeof videojs === 'undefined'){
+      // Video.js CDN မတက်လို့ native video ဖြစ်သွား
+      v.setAttribute('controls','controls');
+      bindNativeEvents();
+      return;
+    }
 
     try{
-      player=new Plyr(v,{
-        controls:[
-          'play-large',
-          'play',
-          'progress',
-          'current-time',
-          'duration',
-          'mute',
-          'volume',
-          'settings',
-          'pip',
-          'airplay',
-          'fullscreen'
-        ],
-
-        /*
-         * လက်ရှိမှာ MP4 source တစ်ခုတည်းပဲ သုံးထားလို့
-         * quality menu အလွတ်မပေါ်အောင် ဖယ်ထားတယ်။
-         */
-        settings:[
-          'speed',
-          'loop'
-        ],
-
-        speed:{
-          selected:1,
-          options:[
-            0.5,
-            0.75,
-            1,
-            1.25,
-            1.5,
-            1.75,
-            2
-          ]
+      player = videojs(v, {
+        controls: true,
+        autoplay: false,
+        preload: 'auto',
+        fluid: false,
+        fill: true,
+        responsive: true,
+        playsinline: true,
+        playbackRates: [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2],
+        controlBar: {
+          volumePanel: { inline: false },
+          pictureInPictureToggle: true,
+          remainingTimeDisplay: true,
+          currentTimeDisplay: true,
+          timeDivider: true,
+          durationDisplay: true,
         },
-
-        ratio:'16:9',
-        autoplay:false,
-        autopause:true,
-        playsinline:true,
-        clickToPlay:true,
-        hideControls:true,
-        resetOnEnd:false,
-        disableContextMenu:true,
-        seekTime:10,
-
-        /*
-         * Global keyboard shortcut မသုံးတော့တာကြောင့်
-         * page scroll လုပ်နေချိန် Space/Arrow key မတိုက်ခိုက်တော့ဘူး။
-         * Player ကို focus လုပ်ထားချိန်မှာပဲ shortcut သုံးမယ်။
-         */
-        keyboard:{
-          focused:true,
-          global:false
+        userActions: {
+          hotkeys: true,
+          doubleClick: true,
         },
-
-        tooltips:{
-          controls:true,
-          seek:true
+        html5: {
+          nativeTextTracks: false,
+          vhs: {
+            overrideNative: false,
+          },
         },
-
-        fullscreen:{
-          enabled:true,
-          fallback:true,
-          iosNative:true
-        },
-
-        /*
-         * User volume / speed preference ကို browser ထဲမှတ်ထားမယ်။
-         */
-        storage:{
-          enabled:true,
-          key:'cmflix-player'
-        }
-      });
-    }catch(_){}
-
-    keepLoadingOnTop();
-
-    function firstFrameReady(){
-      /*
-       * playing event ရောက်ရုံနဲ့ ချက်ချင်းမဖျောက်ဘူး။
-       * requestVideoFrameCallback နဲ့ actual rendered frame ကို စောင့်မယ်။
-       */
-      finishLoadingAfterPaint();
-    }
-
-    function videoStartedProgressing(){
-      /*
-       * Browser တချို့မှာ playing event အရင်ရောက်ပြီး
-       * requestVideoFrameCallback နောက်ကျနိုင်တာအတွက် safety check။
-       *
-       * currentTime တကယ်ရွေ့မှသာ frame finish စစ်မယ်။
-       */
-      if(
-        v &&
-        v.readyState >= 2 &&
-        Number(v.currentTime || 0) > 0
-      ){
-        finishLoadingAfterPaint();
-      }
-    }
-
-    if(player){
-      player.on('enterfullscreen',function(){
-        if(screen.orientation && screen.orientation.lock){
-          screen.orientation
-            .lock('landscape')
-            .catch(function(){});
-        }
+        techOrder: ['html5'],
       });
 
-      player.on('exitfullscreen',function(){
-        if(screen.orientation && screen.orientation.unlock){
-          screen.orientation.unlock();
-        }
+      // Fullscreen orientation lock (mobile)
+      player.on('fullscreenchange', function(){
+        try{
+          if(player.isFullscreen()){
+            if(screen.orientation && screen.orientation.lock){
+              screen.orientation.lock('landscape').catch(function(){});
+            }
+          } else {
+            if(screen.orientation && screen.orientation.unlock){
+              screen.orientation.unlock();
+            }
+          }
+        }catch(_){}
       });
 
-      /*
-       * Source စ load လုပ်ချိန်၊ internet စောင့်ချိန်၊
-       * seek လုပ်ချိန်မှာ spinner ပြမယ်။
-       */
-      player.on('loadstart',function(){
-        keepLoadingOnTop();
-        showLoading();
-      });
-
-      player.on('waiting',function(){
-        keepLoadingOnTop();
-        showLoading();
-      });
-
-      player.on('seeking',function(){
-        keepLoadingOnTop();
-        showLoading();
-      });
-
-      player.on('stalled',function(){
-        keepLoadingOnTop();
-        showLoading();
-      });
-
-      /*
-       * Playback ပြန်စတာ၊ seek ပြီးတာ၊
-       * data/frame အသင့်ဖြစ်တာနဲ့ spinner ဖျောက်ဖို့စစ်မယ်။
-       */
-      player.on('playing',function(){
-        finishLoadingAfterPaint();
-      });
-
-      player.on('canplay',function(){
-        finishLoadingAfterPaint();
-      });
-
-      player.on('canplaythrough',function(){
-        finishLoadingAfterPaint();
-      });
-
-      player.on('loadeddata',function(){
-        if(v && v.readyState >= 2){
-          finishLoadingAfterPaint();
-        }
-      });
-
-      player.on('seeked',function(){
-        finishLoadingAfterPaint();
-      });
-
-      /*
-       * Browser တချို့မှာ seeked/playing event နောက်ကျတာအတွက်
-       * currentTime ပြန်ရွေ့တာနဲ့ ထပ်စစ်မယ်။
-       */
-      player.on('timeupdate',function(){
-        if(
-          v &&
-          v.readyState >= 2 &&
-          !v.seeking
-        ){
-          finishLoadingAfterPaint();
-        }
-      });
-
-      /*
-       * User က buffering ဖြစ်နေချိန် Pause နှိပ်ထားရင်လည်း
-       * frame အသင့်ရှိနေသရွေ့ spinner ကို မထားတော့ပါ။
-       */
-      player.on('pause',function(){
-        if(
-          v &&
-          v.readyState >= 2 &&
-          !v.seeking
-        ){
-          finishLoadingAfterPaint();
-        }
-      });
-
-      player.on('ended',function(){
-        cancelLoading();
-      });
-
-      player.on('error',function(){
-        cancelLoading();
-      });
+      // Loading / buffer events
+      player.on('loadstart', function(){ keepLoadingOnTop(); showLoading(); });
+      player.on('waiting', function(){
+       keepLoadingOnTop(); showLoading(); });
+      player.on('seeking', function(){ keepLoadingOnTop(); showLoading(); });
+      player.on('stalled', function(){ keepLoadingOnTop(); showLoading(); });
+      player.on('playing', function(){ hideLoading(); });
+      player.on('canplay', function(){ hideLoading(); });
+      player.on('canplaythrough', function(){ hideLoading(); });
+      player.on('seeked', function(){ hideLoading(); });
+      player.on('ended', function(){ hideLoading(true); });
+      player.on('error', function(){ hideLoading(true); });
 
       if(GATED){
-        player.on('play',function(){
+        player.on('play', function(){
           player.pause();
-          cancelLoading();
+          hideLoading(true);
           gateMsg();
         });
       }
-    }else if(v){
-      /*
-       * Plyr CDN မတက်လို့ native video ဖြစ်သွားရင်လည်း
-       * spinner logic တူတူသုံးမယ်။
-       */
-      v.addEventListener('loadstart',function(){
-        keepLoadingOnTop();
-        showLoading();
-      });
+    }catch(err){
+      // Fallback native video
+      v.setAttribute('controls','controls');
+      bindNativeEvents();
+    }
 
-      v.addEventListener('waiting',function(){
-        keepLoadingOnTop();
-        showLoading();
-      });
+    keepLoadingOnTop();
+  }
 
-      v.addEventListener('seeking',function(){
-        keepLoadingOnTop();
-        showLoading();
-      });
-
-      v.addEventListener('stalled',function(){
-        keepLoadingOnTop();
-        showLoading();
-      });
-
-      v.addEventListener('playing',function(){
-        finishLoadingAfterPaint();
-      });
-
-      v.addEventListener('canplay',function(){
-        finishLoadingAfterPaint();
-      });
-
-      v.addEventListener('canplaythrough',function(){
-        finishLoadingAfterPaint();
-      });
-
-      v.addEventListener('loadeddata',function(){
-        if(v.readyState >= 2){
-          finishLoadingAfterPaint();
-        }
-      });
-
-      v.addEventListener('seeked',function(){
-        finishLoadingAfterPaint();
-      });
-
-      v.addEventListener('timeupdate',function(){
-        if(
-          v.readyState >= 2 &&
-          !v.seeking
-        ){
-          finishLoadingAfterPaint();
-        }
-      });
-
-      v.addEventListener('pause',function(){
-        if(
-          v.readyState >= 2 &&
-          !v.seeking
-        ){
-          finishLoadingAfterPaint();
-        }
-      });
-
-      v.addEventListener('ended',function(){
-        cancelLoading();
-      });
-
-      v.addEventListener('error',function(){
-        cancelLoading();
-      });
+  function bindNativeEvents(){
+    if(!v) return;
+    v.addEventListener('loadstart', function(){ keepLoadingOnTop(); showLoading(); });
+    v.addEventListener('waiting', function(){ keepLoadingOnTop(); showLoading(); });
+    v.addEventListener('seeking', function(){ keepLoadingOnTop(); showLoading(); });
+    v.addEventListener('stalled', function(){ keepLoadingOnTop(); showLoading(); });
+    v.addEventListener('playing', function(){ hideLoading(); });
+    v.addEventListener('canplay', function(){ hideLoading(); });
+    v.addEventListener('canplaythrough', function(){ hideLoading(); });
+    v.addEventListener('seeked', function(){ hideLoading(); });
+    v.addEventListener('ended', function(){ hideLoading(true); });
+    v.addEventListener('error', function(){ hideLoading(true); });
+    if(GATED){
+      v.addEventListener('play', function(){ v.pause(); gateMsg(); });
     }
   }
 
   function revealPlayer(){
-    /*
-     * Poster cover ကို ဒီနေရာမှာ မဖျောက်တော့ပါ။
-     *
-     * Video frame တကယ်ပေါ်လာတဲ့အချိန်
-     * finishLoadingAfterPaint() ထဲမှာမှ ဖျောက်မယ်။
-     *
-     * ဒါမှ ပထမဆုံး cold proxy load မှာ
-     * poster ပျောက်ပြီး black screen ဖြစ်တာ မရှိတော့ဘူး။
-     */
     keepLoadingOnTop();
     showLoading();
-
     initPlayer();
 
-    /*
-     * Plyr က video element ကို wrapper ထဲ ပြန်ရွှေ့ပြီးနောက်
-     * spinner overlay ကို player-box ရဲ့ အပေါ်ဆုံးမှာ ပြန်ထားမယ်။
-     */
     setTimeout(function(){
       keepLoadingOnTop();
-
       if(loadEl && !loadEl.classList.contains('show')){
         showLoading();
       }
     },30);
-
-    setTimeout(function(){
-      keepLoadingOnTop();
-
-      if(loadEl && !loadEl.classList.contains('show')){
-        showLoading();
-      }
-    },120);
   }
 
   function gateMsg(){
@@ -4048,7 +3725,6 @@ ${footer()}`;
     keepLoadingOnTop();
     showLoading();
 
-    // source တူနေရင် ထပ်ပြီး reset မလုပ်ပါ — ပထမ Play မှာ flicker/black ဖြစ်တာ လျော့စေတယ်
     var currentSrc = '';
     try{
       currentSrc = v ? (v.currentSrc || v.getAttribute('src') || '') : '';
@@ -4058,17 +3734,21 @@ ${footer()}`;
       return;
     }
 
-    if(player){
-      player.source={
-        type:'video',
-        sources:[{src:video,type:'video/mp4'}]
-      };
+    if(player && typeof player.src === 'function'){
+      // Video.js API
+      try{
+        player.src({ src: video, type: 'video/mp4' });
+      }catch(_){
+        if(v){
+          v.src=video;
+          if(v.load) v.load();
+        }
+      }
     } else if(v){
       v.src=video;
       if(v.load) v.load();
     }
 
-    // source set ပြီးပြီးချင်း event မလာသေးတဲ့ browser တွေအတွက် spinner ထပ်ပြ
     setTimeout(function(){
       keepLoadingOnTop();
       showLoading();
@@ -4080,13 +3760,6 @@ ${footer()}`;
     cur.dl=dl||video||'';
     cur.title=title||'';
 
-    /*
-     * Series မှာ Episode အသစ်ပြောင်းတိုင်း Movie စဖွင့်ချိန်လို
-     * နောက်ခံ Cover ကို အရင်ပြန်ပြမယ်။
-     *
-     * Video frame တကယ်ပေါ်လာမှ
-     * finishLoadingAfterPaint() က cover ကို ပြန်ဖျောက်မယ်။
-     */
     if(coverEl){
       coverEl.classList.remove('hide');
     }
@@ -4103,31 +3776,25 @@ ${footer()}`;
   (function(){
     var dv=v.getAttribute('data-video')||''; var dd=v.getAttribute('data-dl')||dv;
     cur.video=dv; cur.dl=dd;
-    // source ကို play နှိပ်မှသာ load မယ် (preload မလုပ်ဘူး)
   })();` : ``}
 
   function tryPlay(){
     keepLoadingOnTop();
     showLoading();
 
-    if(player){
+    if(player && typeof player.play === 'function'){
       var p=player.play();
       if(p && p.catch){
-        p.catch(function(){
-          hideLoading(true);
-        });
+        p.catch(function(){ hideLoading(true); });
       }
     } else if(v){
       var q=v.play();
       if(q && q.catch){
-        q.catch(function(){
-          hideLoading(true);
-        });
+        q.catch(function(){ hideLoading(true); });
       }
     }
   }
 
-  // thumbnail cover ကို နှိပ်ရင် play (Viki ပုံစံ)
   if(coverEl){
     coverEl.addEventListener('click',function(){
       if(GATED){ gateMsg(); return; }
@@ -4150,16 +3817,12 @@ ${footer()}`;
   }
   if(btnDl){
     btnDl.addEventListener('contextmenu', function(e){ e.preventDefault(); });
-    
     btnDl.addEventListener('click', function(e){
       e.preventDefault();
       if(GATED){ gateMsg(); return; }
       if(!cur.dl){ showToast('${item.type === "series" ? "အပိုင်း ရွေးပြီးမှ Download နှိပ်ပါ — link မရှိသေးပါ" : "Download link မရှိသေးပါ"}'); return; }
       window.location.href = cur.dl;
     });
-  }
-  if(GATED && v){
-    v.addEventListener('play',function(){ v.pause(); gateMsg(); });
   }
 
   ${item.type === "series" ? `
@@ -4170,195 +3833,78 @@ ${footer()}`;
       document.querySelectorAll('.ep-list').forEach(function(l){l.classList.toggle('on',l.dataset.s===s);});
     });
   });
-  function getEpisodeLinks(
-  seasonIndex,
-  episodeIndex
-) {
-  var cacheKey =
-    String(seasonIndex) +
-    ':' +
-    String(episodeIndex);
 
-  var cached =
-    episodeLinkCache[cacheKey];
-
-  if (
-    cached &&
-    Date.now() - cached.savedAt <
-      STREAM_LINK_CACHE_MS
-  ) {
-    return Promise.resolve(cached);
-  }
-
-  var apiUrl =
-    '/api/stream-links/' +
-    encodeURIComponent(ITEM_ID) +
-    '?s=' +
-    encodeURIComponent(seasonIndex) +
-    '&e=' +
-    encodeURIComponent(episodeIndex);
-
-  return fetch(apiUrl, {
-    method: 'GET',
-    credentials: 'same-origin',
-    cache: 'no-store',
-    headers: {
-      'Accept': 'application/json'
+  function getEpisodeLinks(seasonIndex, episodeIndex) {
+    var cacheKey = String(seasonIndex) + ':' + String(episodeIndex);
+    var cached = episodeLinkCache[cacheKey];
+    if (cached && Date.now() - cached.savedAt < STREAM_LINK_CACHE_MS) {
+      return Promise.resolve(cached);
     }
-  })
-    .then(function(response) {
-      return response
-        .json()
-        .catch(function() {
-          return {
-            ok: false,
-            error: 'Invalid response'
-          };
-        })
-        .then(function(data) {
-          if (!response.ok || !data.ok) {
-            throw new Error(
-              data.error ||
-              'Stream link ထုတ်လို့မရပါ'
-            );
-          }
-
-          return data;
-        });
-    })
-    .then(function(data) {
+    var apiUrl = '/api/stream-links/' + encodeURIComponent(ITEM_ID) +
+      '?s=' + encodeURIComponent(seasonIndex) + '&e=' + encodeURIComponent(episodeIndex);
+    return fetch(apiUrl, {
+      method: 'GET',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: { 'Accept': 'application/json' }
+    }).then(function(response) {
+      return response.json().catch(function() {
+        return { ok: false, error: 'Invalid response' };
+      }).then(function(data) {
+        if (!response.ok || !data.ok) {
+          throw new Error(data.error || 'Stream link ထုတ်လို့မရပါ');
+        }
+        return data;
+      });
+    }).then(function(data) {
       var result = {
         video: data.video || '',
         dl: data.dl || data.video || '',
         savedAt: Date.now()
       };
-
-      episodeLinkCache[cacheKey] =
-        result;
-
+      episodeLinkCache[cacheKey] = result;
       return result;
     });
-}
+  }
 
-document
-  .querySelectorAll('.ep-btn')
-  .forEach(function(b) {
-    b.addEventListener(
-      'click',
-      function() {
-        if (GATED) {
-          gateMsg();
-          return;
-        }
-
-        var seasonIndex =
-          parseInt(b.dataset.s, 10);
-
-        var episodeIndex =
-          parseInt(b.dataset.e, 10);
-
-        if (
-          !Number.isInteger(seasonIndex) ||
-          !Number.isInteger(episodeIndex) ||
-          seasonIndex < 0 ||
-          episodeIndex < 0
-        ) {
-          showToast(
-            'Episode အချက်အလက် မှားနေပါတယ်'
-          );
-
-          return;
-        }
-
-        document
-          .querySelectorAll('.ep-btn')
-          .forEach(function(x) {
-            x.classList.remove('playing');
-          });
-
-        b.classList.add('playing');
-        b.disabled = true;
-
-        /*
-         * Movie စဖွင့်ချိန်လို Series Episode နှိပ်တာနဲ့
-         * နောက်ခံ Cover ကို အရင်ပြန်ပေါ်စေမယ်။
-         *
-         * Episode link API ကနေ ယူနေတဲ့အချိန်မှာ
-         * Cover အပေါ် Loading အဝိုင်း လည်နေပါမယ်။
-         */
-        if(coverEl){
-          coverEl.classList.remove('hide');
-        }
-
-        keepLoadingOnTop();
-        showLoading();
-
-        getEpisodeLinks(
-          seasonIndex,
-          episodeIndex
-        )
-          .then(function(links) {
-            if (!links.video) {
-              throw new Error(
-                'Episode link မရှိသေးပါ'
-              );
-            }
-
-            /*
-             * Movie မှာအသုံးပြုတဲ့ source/loading လုပ်ဆောင်ချက်နဲ့
-             * တူညီတဲ့ setSource() ကို အသုံးပြုမယ်။
-             */
-            setSource(
-              links.video,
-              links.dl,
-              b.dataset.title || ''
-            );
-
-            setTimeout(
-              tryPlay,
-              120
-            );
-
-            var playerBox =
-              document.querySelector(
-                '.player-box'
-              );
-
-            if (playerBox) {
-              playerBox.scrollIntoView({
-                behavior: 'smooth',
-                block: 'center'
-              });
-            }
-          })
-          .catch(function(error) {
-            cancelLoading();
-            b.classList.remove('playing');
-
-            /*
-             * Episode link ယူမရရင် loading ဖျောက်ပေမယ့်
-             * နောက်ခံ Cover ကို ဆက်ပြထားမယ်။
-             */
-            if(coverEl){
-              coverEl.classList.remove('hide');
-            }
-
-            showToast(
-              String(
-                error &&
-                error.message
-                  ? error.message
-                  : 'Episode ဖွင့်လို့မရပါ'
-              )
-            );
-          })
-          .finally(function() {
-            b.disabled = false;
-          });
+  document.querySelectorAll('.ep-btn').forEach(function(b) {
+    b.addEventListener('click', function() {
+      if (GATED) { gateMsg(); return; }
+      var seasonIndex = parseInt(b.dataset.s, 10);
+      var episodeIndex = parseInt(b.dataset.e, 10);
+      if (!Number.isInteger(seasonIndex) || !Number.isInteger(episodeIndex) ||
+          seasonIndex < 0 || episodeIndex < 0) {
+        showToast('Episode အချက်အလက် မှားနေပါတယ်');
+        return;
       }
-    );
-  });
+      document.querySelectorAll('.ep-btn').forEach(function(x) {
+        x.classList.remove('playing');
+      });
+      b.classList.add('playing');
+      b.disabled = true;
 
+      if(coverEl){ coverEl.classList.remove('hide'); }
+      keepLoadingOnTop();
+      showLoading();
+
+      getEpisodeLinks(seasonIndex, episodeIndex).then(function(links) {
+        if (!links.video) { throw new Error('Episode link မရှိသေးပါ'); }
+        setSource(links.video, links.dl, b.dataset.title || '');
+        setTimeout(tryPlay, 120);
+        var playerBox = document.querySelector('.player-box');
+        if (playerBox) {
+          playerBox.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }).catch(function(error) {
+        hideLoading(true);
+        b.classList.remove('playing');
+        if(coverEl){ coverEl.classList.remove('hide'); }
+        showToast(String(error && error.message ? error.message : 'Episode ဖွင့်လို့မရပါ'));
+      }).finally(function() {
+        b.disabled = false;
+      });
+    });
+  });
   ` : ``}
 
   // ── Bookmark toggle ──
@@ -4371,10 +3917,9 @@ document
       fetch('/bookmark/toggle',{
         method:'POST',
         headers:{'content-type':'application/x-www-form-urlencoded'},
-        body:
-  'id='+encodeURIComponent(id)+
-  '&action='+(on?'remove':'add')+
-  '&csrf_token='+encodeURIComponent(${JSON.stringify(csrfToken)})
+        body:'id='+encodeURIComponent(id)+
+             '&action='+(on?'remove':'add')+
+             '&csrf_token='+encodeURIComponent(${JSON.stringify(csrfToken)})
       }).then(function(r){return r.json();}).then(function(d){
         if(d && d.ok){
           var nowOn=d.bookmarked;
@@ -4388,7 +3933,7 @@ document
   }
 })();`;
 
-  return pageShell((item.title || "Watch") + " — CM FLIX", body, { extraCss, script, plyr: true });
+  return pageShell((item.title || "Watch") + " — CM FLIX", body, { extraCss, script, player: true });
 }
 
 /* ══════════════════════════════════════════════════
@@ -4441,7 +3986,6 @@ function expiredPage(reason = "") {
   return pageShell("Expired — CM FLIX", body, { extraCss: AUTH_CSS });
 }
 
-// maintenance page — user တွေ မြင်ရမယ့် "ပြုပြင်နေဆဲ" စာမျက်နှာ
 function maintenancePageHtml() {
   const body = `
 <div class="auth-wrap"><div class="auth-card" style="text-align:center">
@@ -4452,7 +3996,6 @@ function maintenancePageHtml() {
 </div></div>`;
   return pageShell("Maintenance — CM FLIX", body, { extraCss: AUTH_CSS });
 }
-
 
 function accountPage(user, info = "", error = "", showWelcome = false) {
   const exp = user.expires_at
@@ -4475,14 +4018,11 @@ function accountPage(user, info = "", error = "", showWelcome = false) {
       ? new Date(d.last_seen).toLocaleString("en-GB", { hour12: false, timeZone: "Asia/Yangon" })
       : "—";
     return `<tr>
-      <td>
-        <div class="dev-name">${htmlEscape(d.label || "Device")}</div>
-      </td>
+      <td><div class="dev-name">${htmlEscape(d.label || "Device")}</div></td>
       <td class="dev-seen">${htmlEscape(seen)}</td>
     </tr>`;
   }).join("");
 
-  // ── premium progress ring percentage (visual only) ──
   const ringPct = expired ? 0 : Math.min(100, Math.max(6, Math.round((daysLeft > 30 ? 30 : daysLeft) / 30 * 100)));
 
   const keySvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></svg>`;
@@ -4494,8 +4034,6 @@ function accountPage(user, info = "", error = "", showWelcome = false) {
   const body = `
 <div class="acc-wrap">
   <div class="acc-card">
-
-    <!-- header -->
     <div class="acc-head">
       <div class="acc-id">
         <span class="acc-keyicon">${keySvg}</span>
@@ -4516,9 +4054,7 @@ function accountPage(user, info = "", error = "", showWelcome = false) {
     ${showWelcome ? `
     <div class="acc-welcome" id="accWelcome">
       <div class="acc-welcome-ic">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M20 6 9 17l-5-5"/>
-        </svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
       </div>
       <div class="acc-welcome-tx">
         <div class="acc-welcome-h">ဝယ်ယူအားပေးမှုအတွက် ကျေးဇူးတင်ပါသည် 🎉</div>
@@ -4527,7 +4063,6 @@ function accountPage(user, info = "", error = "", showWelcome = false) {
       <button class="acc-welcome-x" onclick="this.closest('.acc-welcome').remove()">✕</button>
     </div>` : ""}
 
-    <!-- premium status -->
     <div class="acc-premium ${expired ? "is-expired" : ""}">
       <div class="acc-ring" style="--pct:${ringPct}">
         <div class="acc-ring-in">
@@ -4549,7 +4084,6 @@ function accountPage(user, info = "", error = "", showWelcome = false) {
       </div>
     </div>
 
-    <!-- devices -->
     <div class="acc-section">
       <div class="acc-section-head">
         <span class="acc-section-title">${phoneSvg} ချိတ်ဆက်ထားသော Device</span>
@@ -4563,12 +4097,10 @@ function accountPage(user, info = "", error = "", showWelcome = false) {
       </div>
     </div>
 
-    <!-- footer actions -->
     <div class="acc-actions">
       <a class="acc-btn home" href="/">${homeSvg}<span>Home</span></a>
       <a class="acc-btn out" href="/logout">${outSvg}<span>ဤ Device မှ ထွက်ရန်</span></a>
     </div>
-
   </div>
 </div>`;
 
@@ -4607,11 +4139,9 @@ function accountPage(user, info = "", error = "", showWelcome = false) {
       padding:8px 13px;border:1px solid var(--line);border-radius:10px;transition:.15s;white-space:nowrap}
     .acc-back svg{width:15px;height:15px}
     .acc-back:hover{color:#fff;border-color:var(--acc2)}
-
     .acc-alert{padding:11px 14px;border-radius:11px;margin-bottom:14px;font-size:13.5px;line-height:1.5}
     .acc-alert.ok{background:#10331a;border:1px solid #225a30;color:#cfc}
     .acc-alert.err{background:#3a1020;border:1px solid #6a2030;color:#ffd}
-
     .acc-premium{display:flex;align-items:center;gap:20px;padding:20px;border-radius:18px;
       background:linear-gradient(135deg,rgba(15,42,26,.7),rgba(14,24,48,.7));border:1px solid #1f5a38;margin-bottom:22px}
     .acc-premium.is-expired{background:linear-gradient(135deg,rgba(58,16,32,.7),rgba(24,16,30,.7));border-color:#6a2030}
@@ -4632,7 +4162,6 @@ function accountPage(user, info = "", error = "", showWelcome = false) {
     .acc-countdown b{color:var(--acc2);font-size:21px;font-weight:900}
     .acc-cd-expired{color:#f88;font-size:17px;font-weight:800}
     .acc-expdate{font-size:11.5px;color:var(--mut);margin-top:6px}
-
     .acc-section{margin-bottom:22px}
     .acc-section-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:11px}
     .acc-section-title{display:inline-flex;align-items:center;gap:8px;font-size:15px;font-weight:800}
@@ -4646,7 +4175,6 @@ function accountPage(user, info = "", error = "", showWelcome = false) {
     .dev-name{font-weight:600;color:#e7ecf8}
     .dev-seen{white-space:nowrap;font-size:12px;color:var(--mut)}
     .acc-dev-empty{text-align:center;color:var(--mut);padding:20px !important}
-
     .acc-actions{display:flex;gap:10px}
     .acc-btn{flex:1;display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:13px;border-radius:12px;
       text-decoration:none;font-weight:800;font-size:14px;transition:.16s}
@@ -4655,7 +4183,6 @@ function accountPage(user, info = "", error = "", showWelcome = false) {
     .acc-btn.home:hover{filter:brightness(1.08);transform:translateY(-1px)}
     .acc-btn.out{background:#1a1320;color:#f88;border:1px solid #5a2030}
     .acc-btn.out:hover{background:#241622;transform:translateY(-1px)}
-
     @media(max-width:480px){
       .acc-card{padding:20px}
       .acc-premium{flex-direction:column;text-align:center;gap:16px}
@@ -4667,11 +4194,11 @@ function accountPage(user, info = "", error = "", showWelcome = false) {
 
   return pageShell("My Key — CM FLIX", body, { extraCss: AUTH_CSS + accCss });
 }
-
-
 /* ══════════════════════════════════════════════════
-   ADMIN PAGE
+   ADMIN PAGE + EDIT + SEASONS SANITIZER + ROUTER
+   (မူရင်း PART 2 ရဲ့ ကျန်တဲ့ code — Video.js migration အတွက် ပြောင်းစရာမလို)
    ══════════════════════════════════════════════════ */
+
 function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], itPage = 1, itTotalPages = 1, itQuery = "", itTotal = 0, itType = "", tmdbOn = false, draftCount = 0, maintenanceOn = false) {
   const keyRows = keys.map(k => {
     const exp = k.expires_at ? new Date(k.expires_at).toLocaleString("en-GB", { hour12: false, timeZone: "Asia/Yangon" }) : "—";
@@ -4779,7 +4306,6 @@ function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], i
   ${info ? `<div class="ok">${htmlEscape(info)}</div>` : ""}
   ${newKeyBox}
 
-  <!-- ════ ADD CONTENT ════ -->
   <div id="content" style="background:#15101f;border:1px solid #3a1f3f;border-radius:13px;padding:16px;margin-bottom:18px">
     <div style="font-weight:800;color:var(--acc2);margin-bottom:10px">➕ Content အသစ် တင်ရန် (Signed-link stream — link မပေါက်ကြား)</div>
     ${tmdbBox}
@@ -4797,7 +4323,7 @@ function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], i
           </div>
           <div><label>Title</label><input type="text" name="title" id="addTitle" placeholder="ဥပမာ - Action 2025" required></div>
         </div>
-                <div style="background:#0e2030;border:1px solid #1f4a6a;border-radius:11px;padding:12px">
+        <div style="background:#0e2030;border:1px solid #1f4a6a;border-radius:11px;padding:12px">
           <label style="margin-top:0">👩 မင်းသမီးနာမည် (များစွာဆို comma "," ခြားပါ)</label>
           <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
             <input type="text" name="actress" id="addActress" placeholder="ဥပမာ - Kitano Mina, Itsukaichi Mei" style="flex:1;min-width:180px">
@@ -4806,7 +4332,6 @@ function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], i
           <div id="actressPrevBox" style="display:none;gap:10px;flex-wrap:wrap;margin-top:10px"></div>
           <div id="actressPrevMsg" style="font-size:11.5px;color:var(--mut);margin-top:6px"></div>
         </div>
-
         <div><label>Poster URL (ထောင်လိုက် ပုံ — card အတွက်)</label><input type="url" name="poster" id="addPoster" placeholder="https://.../poster.jpg"></div>
         <div><label>Slide Banner URL (အလျားလိုက် ပုံ — slider အတွက်၊ optional)</label><input type="url" name="slide_image" id="addSlide" placeholder="https://.../banner-wide.jpg">
           <div style="font-size:11px;color:var(--mut);margin-top:4px">ကွက်လပ်ထားရင် slider မှာ poster ကို သုံးမယ်။ (16:9 / landscape ပုံ ထည့်ရင် အကောင်းဆုံး)</div>
@@ -4814,10 +4339,10 @@ function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], i
         <div class="single-fields"><label>Video URL (direct / R2)</label><input type="url" name="video_url" placeholder="https://.../video.mp4"></div>
         <div class="single-fields"><label>Download URL (optional — ကွက်လပ်ထားရင် video URL ကို သုံးမယ်)</label><input type="url" name="download_url" placeholder="https://.../download.mp4"></div>
         <div class="series-fields" style="display:none">
-  <label>Series Episodes (JSON သို့မဟုတ် SQLite Task log များ တိုက်ရိုက်ထည့်နိုင်သည်)</label>
-  <textarea name="seasons_json" placeholder="JSON Format ဖြင့်ဖြစ်စေ သို့မဟုတ် ဖုန်းထဲက ကူးယူလာသည့် SQLite Task logs/စာသားများကိုဖြစ်စေ ဤနေရာတွင် တိုက်ရိုက် Paste ချပေးနိုင်ပါသည်။"></textarea>
-  <div style="font-size:11px;color:var(--mut);margin-top:4px">Format: JSON စနစ် (သို့မဟုတ်) SQLite task log များကို တိုက်ရိုက်ထည့်သွင်းပါက စနစ်မှ အလိုအလျောက် အပိုင်းများကို ခွဲထုတ်ပေးပါမည်။</div>
-</div>
+          <label>Series Episodes (JSON သို့မဟုတ် SQLite Task log များ တိုက်ရိုက်ထည့်နိုင်သည်)</label>
+          <textarea name="seasons_json" placeholder="JSON Format ဖြင့်ဖြစ်စေ သို့မဟုတ် ဖုန်းထဲက ကူးယူလာသည့် SQLite Task logs/စာသားများကိုဖြစ်စေ ဤနေရာတွင် တိုက်ရိုက် Paste ချပေးနိုင်ပါသည်။"></textarea>
+          <div style="font-size:11px;color:var(--mut);margin-top:4px">Format: JSON စနစ် (သို့မဟုတ်) SQLite task log များကို တိုက်ရိုက်ထည့်သွင်းပါက စနစ်မှ အလိုအလျောက် အပိုင်းများကို ခွဲထုတ်ပေးပါမည်။</div>
+        </div>
         <div><label>Note / ဖော်ပြချက် (optional)</label><textarea name="note" id="addNote" placeholder="ဇာတ်လမ်းအကျဉ်း…" style="min-height:80px"></textarea></div>
       </div>
       <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap">
@@ -4828,7 +4353,6 @@ function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], i
     </form>
   </div>
 
-  <!-- ════ PUBLISH ALL DRAFTS BAR ════ -->
   <div style="background:${draftCount > 0 ? '#1a1408' : '#0e1830'};border:1px solid ${draftCount > 0 ? '#5a3a10' : 'var(--line)'};border-radius:13px;padding:16px;margin-bottom:18px;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap">
     <div>
       <div style="font-weight:800;color:${draftCount > 0 ? '#ffcf80' : '#cef'};font-size:15px">⏳ Draft အရေအတွက်: ${draftCount} ကား</div>
@@ -4841,7 +4365,6 @@ function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], i
     </form>` : ''}
   </div>
 
-  <!-- ════ MAINTENANCE MODE TOGGLE ════ -->
   <div style="background:${maintenanceOn ? '#2a1408' : '#0e1830'};border:1px solid ${maintenanceOn ? '#8a5a14' : 'var(--line)'};border-radius:13px;padding:16px;margin-bottom:18px;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap">
     <div>
       <div style="font-weight:800;color:${maintenanceOn ? '#ffcf80' : '#cef'};font-size:15px">🔧 Maintenance Mode — ${maintenanceOn ? '<span style="color:#ff9f40">🔴 ဖွင့်ထားသည် (user ဝင်မရ)</span>' : '<span style="color:#7df0a8">🟢 ပိတ်ထားသည် (ပုံမှန်)</span>'}</div>
@@ -4856,7 +4379,6 @@ function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], i
     </form>
   </div>
 
-  <!-- ════ CONTENT LIST ════ -->
   <form method="GET" action="/admin" style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
     <input type="search" name="itq" value="${htmlEscape(itQuery)}" placeholder="🔍 title / id ရှာရန်…" style="flex:1;min-width:180px">
     <select name="ittype" style="width:auto">
@@ -4877,7 +4399,6 @@ function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], i
     </table>
   </div>${itemPager}` : `<div style="text-align:center;color:var(--mut);padding:24px;border:1px solid var(--line);border-radius:11px;margin-bottom:16px">${itQuery || itType ? "မတွေ့ပါ" : "Content မရှိသေးပါ"}</div>`}
 
-  <!-- ════ CREATE KEY ════ -->
   <div style="background:#0e1830;border:1px solid var(--line);border-radius:13px;padding:16px;margin:20px 0 16px">
     <div style="font-weight:800;color:#cef;margin-bottom:10px">🔑 Key အသစ် ဖန်တီးရန်</div>
     <form method="POST" action="/admin/create" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
@@ -4950,7 +4471,6 @@ function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], i
     root.querySelectorAll('.series-fields').forEach(function(el){ el.style.display=isSeries?'block':'none'; });
     root.querySelectorAll('.single-fields').forEach(function(el){ el.style.display=isSeries?'none':'block'; });
   }
-    // Actress preview (javtiful) — comma-separated နာမည်တွေ ပုံကြိုကြည့်
   (function(){
     var btn=document.getElementById('actressPrev'); if(!btn) return;
     var inp=document.getElementById('addActress');
@@ -4985,8 +4505,6 @@ function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], i
       });
     });
   })();
-
-  // TMDB auto-fill
   (function(){
     var btn=document.getElementById('tmdbBtn'); if(!btn) return;
     btn.addEventListener('click',function(){
@@ -5012,9 +4530,6 @@ function adminPage(keys, stats, csrfToken, newKey = "", info = "", items = [], i
   return pageShell("Admin — CM FLIX", body, { extraCss: AUTH_CSS });
 }
 
-/* ══════════════════════════════════════════════════
-   ADMIN EDIT PAGE
-   ══════════════════════════════════════════════════ */
 function adminEditPage(item, csrfToken, error = "") {
   const isSeries = item.type === "series";
   const seasonsJson = isSeries ? JSON.stringify(item.seasons || [], null, 2) : "";
@@ -5039,9 +4554,8 @@ function adminEditPage(item, csrfToken, error = "") {
       </div>
       <div><label>Title</label><input type="text" name="title" value="${htmlEscape(item.title || "")}" required></div>
     </div>
-        <label>👩 မင်းသမီးနာမည် (များစွာဆို comma "," ခြားပါ)</label>
+    <label>👩 မင်းသမီးနာမည် (များစွာဆို comma "," ခြားပါ)</label>
     <input type="text" name="actress" value="${htmlEscape(item.actress || "")}" placeholder="ဥပမာ - Kitano Mina, Itsukaichi Mei">
-
     <label>Poster URL (ထောင်လိုက် — card)</label><input type="url" name="poster" value="${htmlEscape(item.poster || "")}">
     <label>Slide Banner URL (အလျားလိုက် — slider, optional)</label><input type="url" name="slide_image" value="${htmlEscape(item.slide_image || "")}">
     <div class="single-fields" style="display:${isSeries ? "none" : "block"}">
@@ -5072,157 +4586,55 @@ function adminEditPage(item, csrfToken, error = "") {
    ══════════════════════════════════════════════════ */
 function parseRawTextToSeasons(rawText) {
   const text = String(rawText || "");
-
-  /*
-   * Extension ပါ/မပါ direct HTTP/HTTPS URL အားလုံး ရှာမယ်။
-   * Closing punctuation တွေကို အောက်မှာ ဖြတ်ထုတ်မယ်။
-   */
-  const urlRegex =
-    /https?:\/\/[^\s"'<>^|`\x00-\x1F\x7F-\x9F]+/gi;
-
+  const urlRegex = /https?:\/\/[^\s"'<>^|`\x00-\x1F\x7F-\x9F]+/gi;
   const rawMatches = text.match(urlRegex) || [];
-
   const cleanedUrls = rawMatches
-    .map(value =>
-      String(value)
-        .replace(/[),.;\]}]+$/g, "")
-        .trim()
-    )
+    .map(value => String(value).replace(/[),.;\]}]+$/g, "").trim())
     .filter(value => isHttpUrl(value))
     .map(value => value.slice(0, 1000));
-
-  const matches = [
-    ...new Set(cleanedUrls),
-  ];
-
-  if (!matches.length) {
-    return null;
-  }
+  const matches = [...new Set(cleanedUrls)];
+  if (!matches.length) return null;
 
   const episodeRows = [];
-
   for (const originalUrl of matches) {
     let decoded = originalUrl;
-
-    try {
-      decoded = decodeURIComponent(
-        originalUrl
-      );
-    } catch (_) {}
-
+    try { decoded = decodeURIComponent(originalUrl); } catch (_) {}
     let seasonNum = 1;
     let episodeNum = null;
-
-    // S01E02 / s1ep2
-    const seasonEpisode = decoded.match(
-      /(?:^|[^a-z0-9])s(\d{1,3})[\s._-]*e(?:p)?(\d{1,4})(?:[^a-z0-9]|$)/i
-    );
-
+    const seasonEpisode = decoded.match(/(?:^|[^a-z0-9])s(\d{1,3})[\s._-]*e(?:p)?(\d{1,4})(?:[^a-z0-9]|$)/i);
     if (seasonEpisode) {
-      seasonNum = parseInt(
-        seasonEpisode[1],
-        10
-      );
-
-      episodeNum = parseInt(
-        seasonEpisode[2],
-        10
-      );
+      seasonNum = parseInt(seasonEpisode[1], 10);
+      episodeNum = parseInt(seasonEpisode[2], 10);
     } else {
-      // Episode 2 / ep-2 / ep_2
-      const episodeWord = decoded.match(
-        /(?:^|[^a-z0-9])(?:episode|ep|e)[\s._-]*(\d{1,4})(?:[^a-z0-9]|$)/i
-      );
-
+      const episodeWord = decoded.match(/(?:^|[^a-z0-9])(?:episode|ep|e)[\s._-]*(\d{1,4})(?:[^a-z0-9]|$)/i);
       if (episodeWord) {
-        episodeNum = parseInt(
-          episodeWord[1],
-          10
-        );
+        episodeNum = parseInt(episodeWord[1], 10);
       } else {
-        // URL pathname နောက်ဆုံး filename မှာ number ရှိရင်သုံး
         let pathname = "";
-
-        try {
-          pathname = new URL(
-            originalUrl
-          ).pathname;
-        } catch (_) {}
-
-        const baseName =
-          pathname.split("/").pop() || "";
-
-        const numberOnly = baseName.match(
-          /(?:^|[^0-9])(\d{1,4})(?:[^0-9]|$)/
-        );
-
-        if (numberOnly) {
-          episodeNum = parseInt(
-            numberOnly[1],
-            10
-          );
-        }
+        try { pathname = new URL(originalUrl).pathname; } catch (_) {}
+        const baseName = pathname.split("/").pop() || "";
+        const numberOnly = baseName.match(/(?:^|[^0-9])(\d{1,4})(?:[^0-9]|$)/);
+        if (numberOnly) episodeNum = parseInt(numberOnly[1], 10);
       }
     }
-
-    if (
-      !Number.isFinite(seasonNum) ||
-      seasonNum < 1 ||
-      seasonNum > 100
-    ) {
-      seasonNum = 1;
-    }
-
-    if (
-      !Number.isFinite(episodeNum) ||
-      episodeNum < 1 ||
-      episodeNum > 1000
-    ) {
-      episodeNum = null;
-    }
-
-    episodeRows.push({
-      season: seasonNum,
-      ep: episodeNum,
-      video_url: originalUrl,
-    });
+    if (!Number.isFinite(seasonNum) || seasonNum < 1 || seasonNum > 100) seasonNum = 1;
+    if (!Number.isFinite(episodeNum) || episodeNum < 1 || episodeNum > 1000) episodeNum = null;
+    episodeRows.push({ season: seasonNum, ep: episodeNum, video_url: originalUrl });
   }
 
-  /*
-   * Episode number မတွေ့တဲ့ URL တွေကို
-   * ပေါ်လာတဲ့အစဉ်အတိုင်း နံပါတ်ပေးမယ်။
-   */
   const nextEpisodeBySeason = new Map();
-
   for (const row of episodeRows) {
-    const currentNext =
-      nextEpisodeBySeason.get(row.season) || 1;
-
+    const currentNext = nextEpisodeBySeason.get(row.season) || 1;
     if (row.ep == null) {
       row.ep = currentNext;
-
-      nextEpisodeBySeason.set(
-        row.season,
-        currentNext + 1
-      );
+      nextEpisodeBySeason.set(row.season, currentNext + 1);
     } else {
-      nextEpisodeBySeason.set(
-        row.season,
-        Math.max(
-          currentNext,
-          row.ep + 1
-        )
-      );
+      nextEpisodeBySeason.set(row.season, Math.max(currentNext, row.ep + 1));
     }
   }
-
   const grouped = new Map();
-
   for (const row of episodeRows) {
-    if (!grouped.has(row.season)) {
-      grouped.set(row.season, []);
-    }
-
+    if (!grouped.has(row.season)) grouped.set(row.season, []);
     grouped.get(row.season).push({
       ep: row.ep,
       title: `Episode ${row.ep}`,
@@ -5230,660 +4642,146 @@ function parseRawTextToSeasons(rawText) {
       download_url: "",
     });
   }
-
-  return [...grouped.entries()]
-    .map(([season, episodes]) => {
-      episodes.sort(
-        (a, b) => a.ep - b.ep
-      );
-
-      const seenEpisodes = new Set();
-
-      const uniqueEpisodes =
-        episodes.filter(episode => {
-          if (
-            seenEpisodes.has(episode.ep)
-          ) {
-            return false;
-          }
-
-          seenEpisodes.add(episode.ep);
-          return true;
-        });
-
-      return {
-        season,
-        episodes: uniqueEpisodes,
-      };
-    })
-    .sort(
-      (a, b) =>
-        a.season - b.season
-    );
+  return [...grouped.entries()].map(([season, episodes]) => {
+    episodes.sort((a, b) => a.ep - b.ep);
+    const seen = new Set();
+    const unique = episodes.filter(ep => {
+      if (seen.has(ep.ep)) return false;
+      seen.add(ep.ep); return true;
+    });
+    return { season, episodes: unique };
+  }).sort((a, b) => a.season - b.season);
 }
-/* ══════════════════════════════════════════════════
-   SERIES JSON / RAW TEXT SANITIZER
 
-   လက်ခံနိုင်သော format များ:
-   1. Seasons JSON array
-   2. { seasons: [...] }
-   3. { season: 1, episodes: [...] }
-   4. URL string array
-   5. SQLite task log / raw text ထဲက HTTP links
-   ══════════════════════════════════════════════════ */
 function sanitizeSeasons(rawInput) {
   const raw = String(rawInput == null ? "" : rawInput).trim();
-
-  if (!raw) {
-    return {
-      ok: false,
-      err: "Series Episodes JSON သို့မဟုတ် episode link များ ထည့်ပါ။",
-      seasons: [],
-    };
-  }
-
-  /*
-   * Form body နဲ့ D1 row အရွယ်အစား မလွန်စေရန်။
-   * 1.5 MB ထက်ကြီးရင် တစ်ခါတည်း မသိမ်းစေဘူး။
-   */
-  if (raw.length > 1500000) {
-    return {
-      ok: false,
-      err: "Series Episodes စာသားအရမ်းများနေပါတယ်။ အပိုင်းခွဲပြီး ထည့်ပါ။",
-      seasons: [],
-    };
-  }
+  if (!raw) return { ok: false, err: "Series Episodes JSON သို့မဟုတ် episode link များ ထည့်ပါ။", seasons: [] };
+  if (raw.length > 1500000) return { ok: false, err: "Series Episodes စာသားအရမ်းများနေပါတယ်။", seasons: [] };
 
   let source = null;
   let jsonError = "";
-
-  /*
-   * JSON ဖြစ်ရင် အရင် parse လုပ်မယ်။
-   * JSON မဟုတ်ရင် raw text / SQLite log parser သုံးမယ်။
-   */
-  try {
-    source = JSON.parse(raw);
-  } catch (error) {
-    jsonError = String(
-      error && error.message
-        ? error.message
-        : error || ""
-    );
-
+  try { source = JSON.parse(raw); } catch (error) {
+    jsonError = String(error && error.message ? error.message : error || "");
     source = parseRawTextToSeasons(raw);
-
     if (!source || !Array.isArray(source) || !source.length) {
-      return {
-        ok: false,
-        err:
-          "JSON format မှားနေပါတယ်၊ ဒါမှမဟုတ် episode HTTP/HTTPS link မတွေ့ပါ။" +
-          (jsonError ? ` (${jsonError.slice(0, 160)})` : ""),
-        seasons: [],
-      };
+      return { ok: false, err: "JSON format မှားနေပါတယ်၊ ဒါမှမဟုတ် episode HTTP/HTTPS link မတွေ့ပါ။" + (jsonError ? ` (${jsonError.slice(0, 160)})` : ""), seasons: [] };
     }
   }
 
-  /*
-   * Root object ပုံစံအမျိုးမျိုးကို seasons array အဖြစ် ပြောင်း။
-   */
-  if (
-    source &&
-    typeof source === "object" &&
-    !Array.isArray(source)
-  ) {
-    if (Array.isArray(source.seasons)) {
-      source = source.seasons;
-    } else if (Array.isArray(source.episodes)) {
-      source = [
-        {
-          season: source.season || source.season_number || 1,
-          episodes: source.episodes,
-        },
-      ];
-    } else {
-      /*
-       * ဒီပုံစံကိုလည်း လက်ခံ:
-       *
-       * {
-       *   "1": ["https://.../ep1.mp4"],
-       *   "2": ["https://.../ep1.mp4"]
-       * }
-       */
-      const numericSeasonEntries = Object.entries(source)
-        .filter(([key, value]) => {
-          return /^\d{1,3}$/.test(String(key)) &&
-            Array.isArray(value);
-        });
-
-      if (numericSeasonEntries.length) {
-        source = numericSeasonEntries.map(([key, value]) => ({
-          season: parseInt(key, 10),
-          episodes: value,
-        }));
-      }
+  if (source && typeof source === "object" && !Array.isArray(source)) {
+    if (Array.isArray(source.seasons)) source = source.seasons;
+    else if (Array.isArray(source.episodes)) source = [{ season: source.season || source.season_number || 1, episodes: source.episodes }];
+    else {
+      const numericSeasonEntries = Object.entries(source).filter(([key, value]) => /^\d{1,3}$/.test(String(key)) && Array.isArray(value));
+      if (numericSeasonEntries.length) source = numericSeasonEntries.map(([key, value]) => ({ season: parseInt(key, 10), episodes: value }));
     }
   }
 
-  /*
-   * URL string array တစ်ခုတည်းဆို Season 1 အဖြစ်ယူ။
-   *
-   * ဥပမာ:
-   * [
-   *   "https://example.com/ep1.mp4",
-   *   "https://example.com/ep2.mp4"
-   * ]
-   */
-  if (
-    Array.isArray(source) &&
-    source.length &&
-    source.every(value => typeof value === "string")
-  ) {
-    source = [
-      {
-        season: 1,
-        episodes: source,
-      },
-    ];
+  if (Array.isArray(source) && source.length && source.every(v => typeof v === "string")) {
+    source = [{ season: 1, episodes: source }];
   }
 
-  if (!Array.isArray(source)) {
-    return {
-      ok: false,
-      err: "Series JSON root က array ဖြစ်ရပါမယ်၊ သို့မဟုတ် seasons array ပါရပါမယ်။",
-      seasons: [],
-    };
-  }
-
-  if (!source.length) {
-    return {
-      ok: false,
-      err: "Season မရှိပါ။ အနည်းဆုံး Season တစ်ခု ထည့်ပါ။",
-      seasons: [],
-    };
-  }
-
-  if (source.length > 100) {
-    return {
-      ok: false,
-      err: "Season အရေအတွက် 100 ထက် မပိုရပါ။",
-      seasons: [],
-    };
-  }
+  if (!Array.isArray(source)) return { ok: false, err: "Series JSON root က array ဖြစ်ရပါမယ်။", seasons: [] };
+  if (!source.length) return { ok: false, err: "Season မရှိပါ။", seasons: [] };
+  if (source.length > 100) return { ok: false, err: "Season 100 ထက် မပိုရပါ။", seasons: [] };
 
   const normalizedBySeason = new Map();
   let totalEpisodes = 0;
 
-  for (
-    let seasonIndex = 0;
-    seasonIndex < source.length;
-    seasonIndex++
-  ) {
+  for (let seasonIndex = 0; seasonIndex < source.length; seasonIndex++) {
     const seasonRow = source[seasonIndex];
-
-    if (
-      !seasonRow ||
-      typeof seasonRow !== "object" ||
-      Array.isArray(seasonRow)
-    ) {
-      return {
-        ok: false,
-        err: `Season ${seasonIndex + 1} format မှားနေပါတယ်။`,
-        seasons: [],
-      };
-    }
-
-    let seasonNumber = parseInt(
-      seasonRow.season ??
-      seasonRow.season_number ??
-      seasonRow.s ??
-      (seasonIndex + 1),
-      10
-    );
-
-    if (
-      !Number.isFinite(seasonNumber) ||
-      seasonNumber < 1 ||
-      seasonNumber > 100
-    ) {
-      seasonNumber = seasonIndex + 1;
-    }
-
-    let episodeSource =
-      seasonRow.episodes ??
-      seasonRow.episode ??
-      seasonRow.eps ??
-      seasonRow.items;
-
-    /*
-     * Season object ထဲ video URL တိုက်ရိုက်ပါရင်
-     * episode တစ်ခုအဖြစ် ပြောင်းပေးမယ်။
-     */
-    if (
-      !Array.isArray(episodeSource) &&
-      (
-        seasonRow.video_url ||
-        seasonRow.video ||
-        seasonRow.url ||
-        seasonRow.link ||
-        seasonRow.src
-      )
-    ) {
+    if (!seasonRow || typeof seasonRow !== "object" || Array.isArray(seasonRow)) return { ok: false, err: `Season ${seasonIndex + 1} format မှားနေပါတယ်။`, seasons: [] };
+    let seasonNumber = parseInt(seasonRow.season ?? seasonRow.season_number ?? seasonRow.s ?? (seasonIndex + 1), 10);
+    if (!Number.isFinite(seasonNumber) || seasonNumber < 1 || seasonNumber > 100) seasonNumber = seasonIndex + 1;
+    let episodeSource = seasonRow.episodes ?? seasonRow.episode ?? seasonRow.eps ?? seasonRow.items;
+    if (!Array.isArray(episodeSource) && (seasonRow.video_url || seasonRow.video || seasonRow.url || seasonRow.link || seasonRow.src)) {
       episodeSource = [seasonRow];
     }
+    if (!Array.isArray(episodeSource)) return { ok: false, err: `Season ${seasonNumber} မှာ episodes array မရှိပါ။`, seasons: [] };
+    if (!episodeSource.length) return { ok: false, err: `Season ${seasonNumber} မှာ Episode မရှိပါ။`, seasons: [] };
+    if (episodeSource.length > 1000) return { ok: false, err: `Season ${seasonNumber} မှာ Episode 1000 ထက် ပိုနေပါတယ်။`, seasons: [] };
 
-    if (!Array.isArray(episodeSource)) {
-      return {
-        ok: false,
-        err: `Season ${seasonNumber} မှာ episodes array မရှိပါ။`,
-        seasons: [],
-      };
-    }
+    if (!normalizedBySeason.has(seasonNumber)) normalizedBySeason.set(seasonNumber, []);
+    const normalizedEpisodes = normalizedBySeason.get(seasonNumber);
+    const usedEpisodeNumbers = new Set(normalizedEpisodes.map(ep => ep.ep));
 
-    if (!episodeSource.length) {
-      return {
-        ok: false,
-        err: `Season ${seasonNumber} မှာ Episode မရှိပါ။`,
-        seasons: [],
-      };
-    }
-
-    if (episodeSource.length > 1000) {
-      return {
-        ok: false,
-        err: `Season ${seasonNumber} မှာ Episode 1000 ထက် ပိုနေပါတယ်။`,
-        seasons: [],
-      };
-    }
-
-    if (!normalizedBySeason.has(seasonNumber)) {
-      normalizedBySeason.set(seasonNumber, []);
-    }
-
-    const normalizedEpisodes =
-      normalizedBySeason.get(seasonNumber);
-
-    const usedEpisodeNumbers = new Set(
-      normalizedEpisodes.map(episode => episode.ep)
-    );
-
-    for (
-      let episodeIndex = 0;
-      episodeIndex < episodeSource.length;
-      episodeIndex++
-    ) {
+    for (let episodeIndex = 0; episodeIndex < episodeSource.length; episodeIndex++) {
       const episodeRow = episodeSource[episodeIndex];
-
-      let videoUrl = "";
-      let downloadUrl = "";
-      let episodeTitle = "";
-      let episodeNumber = episodeIndex + 1;
-
-      /*
-       * Episode ကို URL string အနေနဲ့ပေးထားရင်။
-       */
-      if (typeof episodeRow === "string") {
-        videoUrl = episodeRow.trim();
-      } else if (
-        episodeRow &&
-        typeof episodeRow === "object" &&
-        !Array.isArray(episodeRow)
-      ) {
-        videoUrl = String(
-          episodeRow.video_url ??
-          episodeRow.video ??
-          episodeRow.url ??
-          episodeRow.link ??
-          episodeRow.src ??
-          ""
-        ).trim();
-
-        downloadUrl = String(
-          episodeRow.download_url ??
-          episodeRow.download ??
-          episodeRow.dl ??
-          ""
-        ).trim();
-
-        episodeTitle = String(
-          episodeRow.title ??
-          episodeRow.name ??
-          episodeRow.label ??
-          ""
-        ).trim();
-
-        const requestedEpisodeNumber = parseInt(
-          episodeRow.ep ??
-          episodeRow.episode ??
-          episodeRow.episode_number ??
-          episodeRow.number ??
-          episodeRow.e ??
-          (episodeIndex + 1),
-          10
-        );
-
-        if (
-          Number.isFinite(requestedEpisodeNumber) &&
-          requestedEpisodeNumber >= 1 &&
-          requestedEpisodeNumber <= 10000
-        ) {
-          episodeNumber = requestedEpisodeNumber;
-        }
+      let videoUrl = "", downloadUrl = "", episodeTitle = "", episodeNumber = episodeIndex + 1;
+      if (typeof episodeRow === "string") { videoUrl = episodeRow.trim(); }
+      else if (episodeRow && typeof episodeRow === "object" && !Array.isArray(episodeRow)) {
+        videoUrl = String(episodeRow.video_url ?? episodeRow.video ?? episodeRow.url ?? episodeRow.link ?? episodeRow.src ?? "").trim();
+        downloadUrl = String(episodeRow.download_url ?? episodeRow.download ?? episodeRow.dl ?? "").trim();
+        episodeTitle = String(episodeRow.title ?? episodeRow.name ?? episodeRow.label ?? "").trim();
+        const requestedEpisodeNumber = parseInt(episodeRow.ep ?? episodeRow.episode ?? episodeRow.episode_number ?? episodeRow.number ?? episodeRow.e ?? (episodeIndex + 1), 10);
+        if (Number.isFinite(requestedEpisodeNumber) && requestedEpisodeNumber >= 1 && requestedEpisodeNumber <= 10000) episodeNumber = requestedEpisodeNumber;
       } else {
-        return {
-          ok: false,
-          err:
-            `Season ${seasonNumber}, Episode ${episodeIndex + 1} ` +
-            "format မှားနေပါတယ်။",
-          seasons: [],
-        };
+        return { ok: false, err: `Season ${seasonNumber}, Episode ${episodeIndex + 1} format မှားနေပါတယ်။`, seasons: [] };
       }
-
-      videoUrl = videoUrl.slice(0, 1000);
-      downloadUrl = downloadUrl.slice(0, 1000);
-      episodeTitle = episodeTitle.slice(0, 200);
-
-      if (!videoUrl) {
-        return {
-          ok: false,
-          err:
-            `Season ${seasonNumber}, Episode ${episodeNumber} ` +
-            "မှာ Video URL မရှိပါ။",
-          seasons: [],
-        };
-      }
-
-      if (!isHttpUrl(videoUrl)) {
-        return {
-          ok: false,
-          err:
-            `Season ${seasonNumber}, Episode ${episodeNumber} ` +
-            "ရဲ့ Video URL မှားနေပါတယ်။",
-          seasons: [],
-        };
-      }
-
-      if (
-        downloadUrl &&
-        !isHttpUrl(downloadUrl)
-      ) {
-        return {
-          ok: false,
-          err:
-            `Season ${seasonNumber}, Episode ${episodeNumber} ` +
-            "ရဲ့ Download URL မှားနေပါတယ်။",
-          seasons: [],
-        };
-      }
-
-      /*
-       * Episode number ထပ်နေရင် နောက်လွတ်တဲ့ number ပေးမယ်။
-       */
+      videoUrl = videoUrl.slice(0, 1000); downloadUrl = downloadUrl.slice(0, 1000); episodeTitle = episodeTitle.slice(0, 200);
+      if (!videoUrl) return { ok: false, err: `Season ${seasonNumber}, Episode ${episodeNumber} မှာ Video URL မရှိပါ။`, seasons: [] };
+      if (!isHttpUrl(videoUrl)) return { ok: false, err: `Season ${seasonNumber}, Episode ${episodeNumber} ရဲ့ Video URL မှားနေပါတယ်။`, seasons: [] };
+      if (downloadUrl && !isHttpUrl(downloadUrl)) return { ok: false, err: `Season ${seasonNumber}, Episode ${episodeNumber} ရဲ့ Download URL မှားနေပါတယ်။`, seasons: [] };
       if (usedEpisodeNumbers.has(episodeNumber)) {
         let nextNumber = 1;
-
-        while (usedEpisodeNumbers.has(nextNumber)) {
-          nextNumber++;
-        }
-
+        while (usedEpisodeNumbers.has(nextNumber)) nextNumber++;
         episodeNumber = nextNumber;
       }
-
       usedEpisodeNumbers.add(episodeNumber);
-
-      normalizedEpisodes.push({
-        ep: episodeNumber,
-        title:
-          episodeTitle ||
-          `Episode ${episodeNumber}`,
-        video_url: videoUrl,
-        download_url: downloadUrl,
-      });
-
+      normalizedEpisodes.push({ ep: episodeNumber, title: episodeTitle || `Episode ${episodeNumber}`, video_url: videoUrl, download_url: downloadUrl });
       totalEpisodes++;
-
-      if (totalEpisodes > 3000) {
-        return {
-          ok: false,
-          err: "Series တစ်ခုမှာ Episode စုစုပေါင်း 3000 ထက် မပိုရပါ။",
-          seasons: [],
-        };
-      }
+      if (totalEpisodes > 3000) return { ok: false, err: "Series တစ်ခုမှာ Episode စုစုပေါင်း 3000 ထက် မပိုရပါ။", seasons: [] };
     }
   }
 
-  const seasons = [...normalizedBySeason.entries()]
-    .map(([season, episodes]) => {
-      episodes.sort((a, b) => a.ep - b.ep);
+  const seasons = [...normalizedBySeason.entries()].map(([season, episodes]) => {
+    episodes.sort((a, b) => a.ep - b.ep);
+    return { season, episodes };
+  }).sort((a, b) => a.season - b.season);
 
-      return {
-        season,
-        episodes,
-      };
-    })
-    .sort((a, b) => a.season - b.season);
-
-  if (!seasons.length || totalEpisodes < 1) {
-    return {
-      ok: false,
-      err: "အသုံးပြုနိုင်သော Episode link မရှိပါ။",
-      seasons: [],
-    };
-  }
-
-  return {
-    ok: true,
-    seasons,
-  };
+  if (!seasons.length || totalEpisodes < 1) return { ok: false, err: "အသုံးပြုနိုင်သော Episode link မရှိပါ။", seasons: [] };
+  return { ok: true, seasons };
 }
 
 /* ══════════════════════════════════════════════════
    Build signed streams for watchPage
    ══════════════════════════════════════════════════ */
-async function buildStreams(
-  env,
-  item,
-  gated,
-  user
-) {
-  /*
-   * Login မဝင်ထားသူ / Key expired ဖြစ်သူအတွက်
-   * signed stream link လုံးဝမထုတ်ပါ။
-   */
+async function buildStreams(env, item, gated, user) {
   if (gated) {
-    if (item.type === "series") {
-      return {
-        seasons: [],
-        lazy: true,
-        initialEpisode: null,
-      };
-    }
-
-    return {
-      single: {
-        video: "",
-        dl: "",
-      },
-    };
+    if (item.type === "series") return { seasons: [], lazy: true, initialEpisode: null };
+    return { single: { video: "", dl: "" } };
   }
-
-  /*
-   * Series ဖြစ်ရင် Episode အားလုံးကို ကြို sign မလုပ်ပါ။
-   *
-   * ပထမဆုံး အသုံးပြုလို့ရတဲ့ Episode တစ်ခုကိုသာ
-   * Movie လို page load အချိန်မှာ signed link ကြိုထုတ်မယ်။
-   *
-   * ကျန် Episode တွေက /api/stream-links/... ကို
-   * နှိပ်တဲ့အချိန်မှ lazy fetch လုပ်မယ်။
-   */
   if (item.type === "series") {
-    const seasons =
-      Array.isArray(item.seasons)
-        ? item.seasons
-        : [];
-
+    const seasons = Array.isArray(item.seasons) ? item.seasons : [];
     let firstEpisode = null;
-
-    /*
-     * Season 1 Episode 1 ကိုပဲ တိတိကျကျ ယူမထားဘဲ
-     * Episode ရှိတဲ့ ပထမဆုံး Season / Episode ကိုရှာမယ်။
-     *
-     * ဒါမှ Season 1 က ဗလာဖြစ်နေလည်း
-     * နောက် Season ထဲက ပထမ Episode ကို ကြို sign လုပ်နိုင်မယ်။
-     */
-    for (
-      let seasonIndex = 0;
-      seasonIndex < seasons.length;
-      seasonIndex++
-    ) {
-      const episodes =
-        Array.isArray(seasons[seasonIndex]?.episodes)
-          ? seasons[seasonIndex].episodes
-          : [];
-
-      for (
-        let episodeIndex = 0;
-        episodeIndex < episodes.length;
-        episodeIndex++
-      ) {
-        const realVideoUrl =
-          resolveRealUrl(
-            item,
-            seasonIndex,
-            episodeIndex,
-            false
-          );
-
-        /*
-         * Video URL မရှိတဲ့ Episode ကိုကျော်ပြီး
-         * အသုံးပြုလို့ရတဲ့ ပထမဆုံး Episode ကိုယူမယ်။
-         */
-        if (!isHttpUrl(realVideoUrl)) {
-          continue;
-        }
-
+    for (let seasonIndex = 0; seasonIndex < seasons.length; seasonIndex++) {
+      const episodes = Array.isArray(seasons[seasonIndex]?.episodes) ? seasons[seasonIndex].episodes : [];
+      for (let episodeIndex = 0; episodeIndex < episodes.length; episodeIndex++) {
+        const realVideoUrl = resolveRealUrl(item, seasonIndex, episodeIndex, false);
+        if (!isHttpUrl(realVideoUrl)) continue;
         const episode = episodes[episodeIndex];
-
         firstEpisode = {
-          s: seasonIndex,
-          e: episodeIndex,
-          title:
-            String(
-              episode?.title ||
-              `Episode ${
-                episode?.ep ||
-                episodeIndex + 1
-              }`
-            ).slice(0, 200),
+          s: seasonIndex, e: episodeIndex,
+          title: String(episode?.title || `Episode ${episode?.ep || episodeIndex + 1}`).slice(0, 200),
         };
-
         break;
       }
-
-      if (firstEpisode) {
-        break;
-      }
+      if (firstEpisode) break;
     }
-
-    /*
-     * Series ထဲ အသုံးပြုလို့ရတဲ့ Episode မရှိရင်
-     * signed link မထုတ်ဘဲ lazy mode ပဲပြန်မယ်။
-     */
-    if (!firstEpisode) {
-      return {
-        seasons: [],
-        lazy: true,
-        initialEpisode: null,
-      };
-    }
-
-    const u =
-      await userStreamTag(user);
-
-    /*
-     * ပထမ Episode အတွက် Playback + Download
-     * signed URL နှစ်ခုကို parallel ထုတ်မယ်။
-     */
-    const [video, dl] =
-      await Promise.all([
-        makeStreamUrl(
-          env,
-          item.id,
-          {
-            s: firstEpisode.s,
-            e: firstEpisode.e,
-            download: false,
-            u,
-          }
-        ),
-
-        makeStreamUrl(
-          env,
-          item.id,
-          {
-            s: firstEpisode.s,
-            e: firstEpisode.e,
-            download: true,
-            u,
-          }
-        ),
-      ]);
-
-    return {
-      seasons: [],
-      lazy: true,
-
-      /*
-       * watchPage JavaScript က ဒီ signed link ကို
-       * browser-side Episode cache ထဲ ကြိုထည့်မယ်။
-       */
-      initialEpisode: {
-        s: firstEpisode.s,
-        e: firstEpisode.e,
-        title: firstEpisode.title,
-        video,
-        dl,
-      },
-    };
-  }
-
-  /*
-   * Movie / Adult / Random အတွက် လက်ရှိအတိုင်း
-   * signed playback + download link ကြိုထုတ်မယ်။
-   */
-  const u =
-    await userStreamTag(user);
-
-  const [video, dl] =
-    await Promise.all([
-      makeStreamUrl(
-        env,
-        item.id,
-        {
-          s: -1,
-          e: -1,
-          download: false,
-          u,
-        }
-      ),
-
-      makeStreamUrl(
-        env,
-        item.id,
-        {
-          s: -1,
-          e: -1,
-          download: true,
-          u,
-        }
-      ),
+    if (!firstEpisode) return { seasons: [], lazy: true, initialEpisode: null };
+    const u = await userStreamTag(user);
+    const [video, dl] = await Promise.all([
+      makeStreamUrl(env, item.id, { s: firstEpisode.s, e: firstEpisode.e, download: false, u }),
+      makeStreamUrl(env, item.id, { s: firstEpisode.s, e: firstEpisode.e, download: true, u }),
     ]);
-
-  return {
-    single: {
-      video,
-      dl,
-    },
-  };
+    return { seasons: [], lazy: true, initialEpisode: { s: firstEpisode.s, e: firstEpisode.e, title: firstEpisode.title, video, dl } };
+  }
+  const u = await userStreamTag(user);
+  const [video, dl] = await Promise.all([
+    makeStreamUrl(env, item.id, { s: -1, e: -1, download: false, u }),
+    makeStreamUrl(env, item.id, { s: -1, e: -1, download: true, u }),
+  ]);
+  return { single: { video, dl } };
 }
 
 function resolveRealUrl(item, s, e, download) {
@@ -5907,80 +4805,43 @@ async function routeRequest(context) {
   const path = url.pathname;
   const method = request.method;
   const clientIp = getClientIp(request);
-    // ───────────── TELEGRAM WEBHOOK ─────────────
+
   if (path === "/tg/webhook" && method === "POST") {
-    // secret token စစ် — Telegram က header နဲ့ ပို့တဲ့ secret နဲ့ ကိုက်မှ လက်ခံ
     const secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token") || "";
-    if (!env.TG_WEBHOOK_SECRET || !safeEqual(secret, env.TG_WEBHOOK_SECRET)) {
-      return new Response("forbidden", { status: 403 });
-    }
+    if (!env.TG_WEBHOOK_SECRET || !safeEqual(secret, env.TG_WEBHOOK_SECRET)) return new Response("forbidden", { status: 403 });
     let update = null;
     try { update = await request.json(); } catch (_) { return new Response("bad", { status: 400 }); }
-    // Telegram ကို ချက်ချင်း 200 ပြန်ပေးဖို့ — processing ကို background မှာ
     context.waitUntil(handleTelegramUpdate(env, update).catch(() => {}));
     return new Response("ok", { status: 200 });
   }
 
-  // ───────────── MAINTENANCE MODE CHECK ─────────────
-  // DB ထဲ maintenance ဖွင့်ထားရင် — admin မဟုတ်တဲ့သူ အားလုံးကို "ပြုပြင်နေဆဲ" page ပြ
   if (await isMaintenanceOn(env)) {
-    // admin login ဝင်ဖို့ /login, /logout, telegram webhook, admin routes တွေကတော့ အမြဲ ဖွင့်ထား
-    const mAllow = path === "/login" || path === "/logout" ||
-                   path === "/tg/webhook" || path === "/admin" || path.startsWith("/admin/");
+    const mAllow = path === "/login" || path === "/logout" || path === "/tg/webhook" || path === "/admin" || path.startsWith("/admin/");
     if (!mAllow) {
       const mUser = await getCurrentUser(request, env);
       if (!mUser || !mUser.isAdmin) {
-        return new Response(maintenancePageHtml(), {
-          status: 503,
-          headers: { "content-type": "text/html; charset=utf-8", "Retry-After": "3600" },
-        });
+        return new Response(maintenancePageHtml(), { status: 503, headers: { "content-type": "text/html; charset=utf-8", "Retry-After": "3600" } });
       }
     }
   }
 
-   // ───────────── HOME ─────────────
-
   if (path === "/" && method === "GET") {
     const user = await getCurrentUser(request, env);
-    // login ဝင်ထားရင် welcome box ပါတာမို့ cache မလုပ်၊ guest ဆို cache (၃၀ စက္ကန့်)
     const showWelcome = url.searchParams.get("welcome") === "1" && user && !user.isAdmin && !isExpired(user);
     if (user || showWelcome) {
       const hp = await listHomePreview(env, HOME_PREVIEW_COUNT, 6);
-      const sections = [
-        { type: "movie",  items: hp.movie },
-        { type: "series", items: hp.series },
-        { type: "adult",  items: hp.adult },
-        { type: "random", items: hp.random },
-      ];
-      const slides = hp.slides.map(i => ({
-        image: i.slide_image || i.poster, title: i.title,
-        desc: (CATEGORIES[i.type] || CATEGORIES.movie).name,
-        tag: (CATEGORIES[i.type] || CATEGORIES.movie).name.toUpperCase(),
-        link: "/watch/" + i.id,
-      }));
+      const sections = [{ type: "movie", items: hp.movie }, { type: "series", items: hp.series }, { type: "adult", items: hp.adult }, { type: "random", items: hp.random }];
+      const slides = hp.slides.map(i => ({ image: i.slide_image || i.poster, title: i.title, desc: (CATEGORIES[i.type] || CATEGORIES.movie).name, tag: (CATEGORIES[i.type] || CATEGORIES.movie).name.toUpperCase(), link: "/watch/" + i.id }));
       return new Response(homePage(slides, sections, user, showWelcome), { headers: { "content-type": "text/html; charset=utf-8" } });
     }
-    // guest → edge cache (၅ မိနစ် — Cloudflare D1 read ချွေတာရန်၊ content အသစ်က ၅ မိနစ်နောက်မှ ပေါ်)
     return cachedHtml(context, request, 300, async () => {
       const hp = await listHomePreview(env, HOME_PREVIEW_COUNT, 6);
-      const sections = [
-        { type: "movie",  items: hp.movie },
-        { type: "series", items: hp.series },
-        { type: "adult",  items: hp.adult },
-        { type: "random", items: hp.random },
-      ];
-      const slides = hp.slides.map(i => ({
-        image: i.slide_image || i.poster, title: i.title,
-        desc: (CATEGORIES[i.type] || CATEGORIES.movie).name,
-        tag: (CATEGORIES[i.type] || CATEGORIES.movie).name.toUpperCase(),
-        link: "/watch/" + i.id,
-      }));
+      const sections = [{ type: "movie", items: hp.movie }, { type: "series", items: hp.series }, { type: "adult", items: hp.adult }, { type: "random", items: hp.random }];
+      const slides = hp.slides.map(i => ({ image: i.slide_image || i.poster, title: i.title, desc: (CATEGORIES[i.type] || CATEGORIES.movie).name, tag: (CATEGORIES[i.type] || CATEGORIES.movie).name.toUpperCase(), link: "/watch/" + i.id }));
       return homePage(slides, sections, null, false);
     });
   }
 
-
-   // ───────────── CATEGORY GRID ─────────────
   if (path.startsWith("/category/") && method === "GET") {
     const cat = path.slice("/category/".length).split("/")[0];
     if (!isValidCategory(cat)) return Response.redirect(new URL("/", url).toString(), 302);
@@ -5994,348 +4855,59 @@ async function routeRequest(context) {
       const c = CATEGORIES[cat];
       return gridPage(`${c.icon} ${c.name}`, cat, slice, page, totalPages, total, (p) => `/category/${cat}?page=${p}`, "", forUser);
     };
-    // login ဝင်ထားရင် fresh (key chip ပြရန်)၊ guest ဆို edge cache (၃၀ စက္ကန့်)
-    if (user) {
-      return new Response(await build(user), { headers: { "content-type": "text/html; charset=utf-8" } });
-    }
+    if (user) return new Response(await build(user), { headers: { "content-type": "text/html; charset=utf-8" } });
     return cachedHtml(context, request, 300, () => build(null));
   }
 
-
-// ───────────── SEARCH ─────────────
-if (path === "/search" && method === "GET") {
-  const user = await getCurrentUser(request, env);
-
-  const q = String(url.searchParams.get("q") || "")
-    .trim()
-    .slice(0, 80);
-
-  let page = parseInt(
-    url.searchParams.get("page") || "1",
-    10
-  );
-
-  if (!Number.isFinite(page) || page < 1) {
-    page = 1;
+  if (path === "/search" && method === "GET") {
+    const user = await getCurrentUser(request, env);
+    const q = String(url.searchParams.get("q") || "").trim().slice(0, 80);
+    let page = parseInt(url.searchParams.get("page") || "1", 10);
+    if (!Number.isFinite(page) || page < 1) page = 1;
+    const buildSearchPage = async (pageUser) => {
+      const { items: slice, total } = await searchItemsPaged(env, q, page, ITEMS_PER_PAGE);
+      const totalPages = Math.max(1, Math.ceil(total / ITEMS_PER_PAGE));
+      const safePage = Math.min(page, totalPages);
+      return gridPage(`🔍 "${q}"`, "", slice, safePage, totalPages, total, p => `/search?q=${encodeURIComponent(q)}&page=${p}`, q, pageUser);
+    };
+    if (user) return htmlResponse(await buildSearchPage(user), { "Cache-Control": "private, no-store" });
+    return cachedHtml(context, request, 120, () => buildSearchPage(null));
   }
 
-  const buildSearchPage = async (pageUser) => {
-    const {
-      items: slice,
-      total,
-    } = await searchItemsPaged(
-      env,
-      q,
-      page,
-      ITEMS_PER_PAGE
-    );
-
-    const totalPages = Math.max(
-      1,
-      Math.ceil(total / ITEMS_PER_PAGE)
-    );
-
-    const safePage = Math.min(page, totalPages);
-
-    return gridPage(
-      `🔍 "${q}"`,
-      "",
-      slice,
-      safePage,
-      totalPages,
-      total,
-      p =>
-        `/search?q=${encodeURIComponent(q)}&page=${p}`,
-      q,
-      pageUser
-    );
-  };
-
-  // Login ဝင်ထားသူက premium label/My List စတာပါလို့ private
-  if (user) {
-    return htmlResponse(
-      await buildSearchPage(user),
-      {
-        "Cache-Control": "private, no-store",
-      }
-    );
-  }
-
-  // Guest search result ကို edge မှာ ၂ မိနစ် cache
-  return cachedHtml(
-    context,
-    request,
-    120,
-    () => buildSearchPage(null)
-  );
-}
-// ───────────── LAZY STREAM LINKS FOR SERIES ─────────────
-if (
-  path.startsWith("/api/stream-links/") &&
-  method === "GET"
-) {
-  let id = "";
-
-  try {
-    id = decodeURIComponent(
-      path
-        .slice(
-          "/api/stream-links/".length
-        )
-        .split("/")[0]
-    );
-  } catch (_) {
-    return new Response(
-      JSON.stringify({
-        ok: false,
-        error: "Invalid item id",
-      }),
-      {
-        status: 400,
-        headers: {
-          "content-type":
-            "application/json; charset=utf-8",
-          "cache-control": "no-store",
-        },
-      }
-    );
-  }
-
-  const user =
-    await getCurrentUser(request, env);
-
-  if (!user || isExpired(user)) {
-    return new Response(
-      JSON.stringify({
-        ok: false,
-        error: "Login required",
-      }),
-      {
-        status: 403,
-        headers: {
-          "content-type":
-            "application/json; charset=utf-8",
-          "cache-control": "no-store",
-        },
-      }
-    );
-  }
-
-  const seasonIndex = parseInt(
-    url.searchParams.get("s") || "-1",
-    10
-  );
-
-  const episodeIndex = parseInt(
-    url.searchParams.get("e") || "-1",
-    10
-  );
-
-  if (
-    !Number.isInteger(seasonIndex) ||
-    !Number.isInteger(episodeIndex) ||
-    seasonIndex < 0 ||
-    episodeIndex < 0
-  ) {
-    return new Response(
-      JSON.stringify({
-        ok: false,
-        error: "Invalid episode",
-      }),
-      {
-        status: 400,
-        headers: {
-          "content-type":
-            "application/json; charset=utf-8",
-          "cache-control": "no-store",
-        },
-      }
-    );
-  }
-
-  const item =
-    await getItem(env, id);
-
-  if (
-    !item ||
-    item.type !== "series" ||
-    (
-      item.published !== 1 &&
-      !user.isAdmin
-    )
-  ) {
-    return new Response(
-      JSON.stringify({
-        ok: false,
-        error: "Series not found",
-      }),
-      {
-        status: 404,
-        headers: {
-          "content-type":
-            "application/json; charset=utf-8",
-          "cache-control": "no-store",
-        },
-      }
-    );
-  }
-
-  const episode =
-    item.seasons?.[seasonIndex]
-      ?.episodes?.[episodeIndex];
-
-  if (!episode) {
-    return new Response(
-      JSON.stringify({
-        ok: false,
-        error: "Episode not found",
-      }),
-      {
-        status: 404,
-        headers: {
-          "content-type":
-            "application/json; charset=utf-8",
-          "cache-control": "no-store",
-        },
-      }
-    );
-  }
-
-  const realVideo =
-    resolveRealUrl(
-      item,
-      seasonIndex,
-      episodeIndex,
-      false
-    );
-
-  if (!isHttpUrl(realVideo)) {
-    return new Response(
-      JSON.stringify({
-        ok: false,
-        error: "Episode source missing",
-      }),
-      {
-        status: 404,
-        headers: {
-          "content-type":
-            "application/json; charset=utf-8",
-          "cache-control": "no-store",
-        },
-      }
-    );
-  }
-
-  const userTag =
-    await userStreamTag(user);
-
-  /*
-   * Playback URL က proxy pool ဆီဆက်သွားမယ်။
-   * Download URL က မူရင်း design အတိုင်း main Worker ဆီသွားမယ်။
-   */
-  const [video, dl] =
-    await Promise.all([
-      makeStreamUrl(
-        env,
-        item.id,
-        {
-          s: seasonIndex,
-          e: episodeIndex,
-          download: false,
-          u: userTag,
-        }
-      ),
-
-      makeStreamUrl(
-        env,
-        item.id,
-        {
-          s: seasonIndex,
-          e: episodeIndex,
-          download: true,
-          u: userTag,
-        }
-      ),
+  if (path.startsWith("/api/stream-links/") && method === "GET") {
+    let id = "";
+    try { id = decodeURIComponent(path.slice("/api/stream-links/".length).split("/")[0]); }
+    catch (_) { return new Response(JSON.stringify({ ok: false, error: "Invalid item id" }), { status: 400, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } }); }
+    const user = await getCurrentUser(request, env);
+    if (!user || isExpired(user)) return new Response(JSON.stringify({ ok: false, error: "Login required" }), { status: 403, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
+    const seasonIndex = parseInt(url.searchParams.get("s") || "-1", 10);
+    const episodeIndex = parseInt(url.searchParams.get("e") || "-1", 10);
+    if (!Number.isInteger(seasonIndex) || !Number.isInteger(episodeIndex) || seasonIndex < 0 || episodeIndex < 0) return new Response(JSON.stringify({ ok: false, error: "Invalid episode" }), { status: 400, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
+    const item = await getItem(env, id);
+    if (!item || item.type !== "series" || (item.published !== 1 && !user.isAdmin)) return new Response(JSON.stringify({ ok: false, error: "Series not found" }), { status: 404, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
+    const episode = item.seasons?.[seasonIndex]?.episodes?.[episodeIndex];
+    if (!episode) return new Response(JSON.stringify({ ok: false, error: "Episode not found" }), { status: 404, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
+    const realVideo = resolveRealUrl(item, seasonIndex, episodeIndex, false);
+    if (!isHttpUrl(realVideo)) return new Response(JSON.stringify({ ok: false, error: "Episode source missing" }), { status: 404, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
+    const userTag = await userStreamTag(user);
+    const [video, dl] = await Promise.all([
+      makeStreamUrl(env, item.id, { s: seasonIndex, e: episodeIndex, download: false, u: userTag }),
+      makeStreamUrl(env, item.id, { s: seasonIndex, e: episodeIndex, download: true, u: userTag }),
     ]);
-
-  return new Response(
-    JSON.stringify({
-      ok: true,
-      video,
-      dl,
-      expires_in: STREAM_TTL_SEC,
-    }),
-    {
-      headers: {
-        "content-type":
-          "application/json; charset=utf-8",
-        "cache-control":
-          "private, no-store",
-        "X-Content-Type-Options":
-          "nosniff",
-      },
-    }
-  );
-}
-
-
-  // ───────────── WATCH ─────────────
-  if (path.startsWith("/watch/") && method === "GET") {
-  const id = path
-    .slice("/watch/".length)
-    .split("/")[0];
-
-  const user = await getCurrentUser(
-    request,
-    env
-  );
-
-  const item = await getItem(
-    env,
-    id
-  );
-
-  /*
-   * Published မဟုတ်တဲ့ Draft ကို public/user မကြည့်နိုင်ရ။
-   * Admin login ဝင်ထားသူပဲ preview ကြည့်နိုင်မယ်။
-   */
-  const canViewDraft =
-    !!(user && user.isAdmin);
-
-  if (
-    !item ||
-    (
-      item.published !== 1 &&
-      !canViewDraft
-    )
-  ) {
-    return new Response(
-      pageShell(
-        "Not found",
-        `${topBar("", "", user)}
-         <div class="wrap">
-           <div class="empty">
-             ဇာတ်ကား ရှာမတွေ့ပါ ·
-             <a href="/" style="color:var(--acc2)">Home</a>
-           </div>
-         </div>`
-      ),
-      {
-        status: 404,
-        headers: {
-          "content-type": "text/html; charset=utf-8",
-          "cache-control": "private, no-store",
-        },
-      }
-    );
+    return new Response(JSON.stringify({ ok: true, video, dl, expires_in: STREAM_TTL_SEC }), { headers: { "content-type": "application/json; charset=utf-8", "cache-control": "private, no-store", "X-Content-Type-Options": "nosniff" } });
   }
 
-  const gated =
-    !user ||
-    isExpired(user);
+  if (path.startsWith("/watch/") && method === "GET") {
+    const id = path.slice("/watch/".length).split("/")[0];
+    const user = await getCurrentUser(request, env);
+    const item = await getItem(env, id);
+    const canViewDraft = !!(user && user.isAdmin);
+    if (!item || (item.published !== 1 && !canViewDraft)) {
+      return new Response(pageShell("Not found", `${topBar("", "", user)}<div class="wrap"><div class="empty">ဇာတ်ကား ရှာမတွေ့ပါ · <a href="/" style="color:var(--acc2)">Home</a></div></div>`), { status: 404, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "private, no-store" } });
+    }
+    const gated = !user || isExpired(user);
     const streams = await buildStreams(env, item, gated, user);
     const bookmarked = (user && !user.isAdmin) ? await isBookmarked(env, user.keyId, item.id) : false;
-    // မင်းသမီးနာမည်တွေအတွက် ပုံ/slug ယူ (cache ကနေ)
     const actresses = [];
     for (const nm of parseActressNames(item.actress)) {
       const slug = actressNameToSlug(nm);
@@ -6343,484 +4915,117 @@ if (
       const c = await getActressCache(env, slug);
       actresses.push({ slug, name: nm, image: c ? c.image : "" });
     }
-    const {
-  token: watchCsrfToken,
-  isNew: watchCsrfNew
-} = await getOrCreateCsrf(request, env);
-
-const watchHeaders = {
-  "content-type": "text/html; charset=utf-8",
-  "cache-control": "private, no-store",
-};
-
-if (watchCsrfNew) {
-  watchHeaders["Set-Cookie"] = csrfCookieHeader(watchCsrfToken);
-}
-
-return new Response(
-  watchPage(
-    item,
-    user,
-    gated,
-    streams,
-    bookmarked,
-    actresses,
-    watchCsrfToken
-  ),
-  { headers: watchHeaders }
-);
-
+    const { token: watchCsrfToken, isNew: watchCsrfNew } = await getOrCreateCsrf(request, env);
+    const watchHeaders = { "content-type": "text/html; charset=utf-8", "cache-control": "private, no-store" };
+    if (watchCsrfNew) watchHeaders["Set-Cookie"] = csrfCookieHeader(watchCsrfToken);
+    return new Response(watchPage(item, user, gated, streams, bookmarked, actresses, watchCsrfToken), { headers: watchHeaders });
   }
 
-  // ───────────── STREAM (signed) — Worker PROXY + EDGE CACHE ─────────────
   if (path.startsWith("/stream/") && method === "GET") {
     const id = decodeURIComponent(path.slice("/stream/".length).split("/")[0]);
     const item = await getItem(env, id);
     if (!item) return new Response("Not found", { status: 404 });
-
     const v = await verifyStreamSig(env, id, url.searchParams);
-    if (!v.ok) {
-      return new Response(v.reason === "expired" ? "Link expired" : "Invalid link", { status: 403 });
-    }
-
+    if (!v.ok) return new Response(v.reason === "expired" ? "Link expired" : "Invalid link", { status: 403 });
     const user = await getCurrentUser(request, env);
-    if (!user || isExpired(user)) {
-      return new Response("Login required", { status: 403 });
-    }
-
+    if (!user || isExpired(user)) return new Response("Login required", { status: 403 });
     const u = await userStreamTag(user);
-    if (!v.u || !safeEqual(v.u, u)) {
-      return new Response("Link not valid for this session", { status: 403 });
-    }
-
-    // ── HOTLINK / EMBED ကာကွယ်ခြင်း ──
-    // တခြား website (iframe / img / video embed) က signed link ကို hotlink
-    // လုပ်တာ တားဆီးရန် — Referer / Origin ကို ကိုယ့် site domain နဲ့သာ ကိုက်စေမယ်။
-    // (browser တွေ media request တိုင်း Referer ပို့တာမို့ ဒါက effective ဖြစ်တယ်)
+    if (!v.u || !safeEqual(v.u, u)) return new Response("Link not valid for this session", { status: 403 });
     const originHost = url.host;
     const referer = request.headers.get("Referer") || "";
     const originHdr = request.headers.get("Origin") || "";
     let refererOk = true;
-    if (referer) {
-      try { refererOk = new URL(referer).host === originHost; } catch (_) { refererOk = false; }
-    } else if (originHdr) {
-      try { refererOk = new URL(originHdr).host === originHost; } catch (_) { refererOk = false; }
-    }
-    // Referer/Origin လုံးဝ မပါတဲ့ direct request (ဥပမာ browser address bar) ကို ခွင့်ပြု၊
-    // ပါပြီး တခြား domain ဖြစ်ရင်သာ ပိတ်။
-    if (!refererOk) {
-      return new Response("Hotlink not allowed", { status: 403 });
-    }
+    if (referer) { try { refererOk = new URL(referer).host === originHost; } catch (_) { refererOk = false; } }
+    else if (originHdr) { try { refererOk = new URL(originHdr).host === originHost; } catch (_) { refererOk = false; } }
+    if (!refererOk) return new Response("Hotlink not allowed", { status: 403 });
     const real = resolveRealUrl(item, v.s, v.e, v.d === 1);
     if (!isHttpUrl(real)) return new Response("No source", { status: 404 });
-
-    const rangeHeader =
-  request.headers.get("Range");
-
-const fwdHeaders = new Headers();
-
-if (rangeHeader) {
-  const rangeMatch = rangeHeader.match(
-    /^bytes=(\d*)-(\d*)$/i
-  );
-
-  if (!rangeMatch) {
-    return new Response(
-      "Invalid Range",
-      {
-        status: 416,
-        headers: {
-          "cache-control": "no-store",
-        },
+    const rangeHeader = request.headers.get("Range");
+    const fwdHeaders = new Headers();
+    if (rangeHeader) {
+      const rangeMatch = rangeHeader.match(/^bytes=(\d*)-(\d*)$/i);
+      if (!rangeMatch) return new Response("Invalid Range", { status: 416, headers: { "cache-control": "no-store" } });
+      const startText = rangeMatch[1]; const endText = rangeMatch[2];
+      if (!startText && !endText) return new Response("Invalid Range", { status: 416, headers: { "cache-control": "no-store" } });
+      if (startText && endText) {
+        const start = Number(startText); const end = Number(endText);
+        if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start) return new Response("Invalid Range", { status: 416, headers: { "cache-control": "no-store" } });
       }
-    );
-  }
-
-  const startText = rangeMatch[1];
-  const endText = rangeMatch[2];
-
-  if (!startText && !endText) {
-    return new Response(
-      "Invalid Range",
-      {
-        status: 416,
-        headers: {
-          "cache-control": "no-store",
-        },
-      }
-    );
-  }
-
-  if (startText && endText) {
-    const start = Number(startText);
-    const end = Number(endText);
-
-    if (
-      !Number.isSafeInteger(start) ||
-      !Number.isSafeInteger(end) ||
-      start < 0 ||
-      end < start
-    ) {
-      return new Response(
-        "Invalid Range",
-        {
-          status: 416,
-          headers: {
-            "cache-control": "no-store",
-          },
-        }
-      );
+      fwdHeaders.set("Range", `bytes=${startText}-${endText}`);
     }
-  }
-
-  fwdHeaders.set(
-    "Range",
-    `bytes=${startText}-${endText}`
-  );
-}
-
-const ifRange =
-  request.headers.get("If-Range");
-
-if (ifRange) {
-  fwdHeaders.set(
-    "If-Range",
-    ifRange
-  );
-}
-
+    const ifRange = request.headers.get("If-Range");
+    if (ifRange) fwdHeaders.set("If-Range", ifRange);
     let originResp;
-
-try {
-  const fetchOpts = {
-    method: "GET",
-    headers: fwdHeaders,
-    redirect: "follow",
-  };
-
-  /*
-   * Download ကို cache မလုပ်။
-   * Main worker က playback fallback handle လုပ်ရမှသာ
-   * outgoing origin cache သုံးမယ်။
-   */
-  if (v.d !== 1) {
-    fetchOpts.cf = {
-      cacheEverything: true,
-      cacheTtlByStatus: {
-        "200-299": 86400,
-        "301-302": 300,
-        "404": 60,
-        "500-599": 0,
-      },
-    };
-  }
-
-  originResp = await fetch(
-    real,
-    fetchOpts
-  );
-} catch (error) {
-  console.error(
-    "Main stream upstream error",
-    {
-      itemId: id,
-      message: String(
-        error?.message ||
-        error ||
-        ""
-      ),
+    try {
+      const fetchOpts = { method: "GET", headers: fwdHeaders, redirect: "follow" };
+      if (v.d !== 1) {
+        fetchOpts.cf = { cacheEverything: true, cacheTtlByStatus: { "200-299": 86400, "301-302": 300, "404": 60, "500-599": 0 } };
+      }
+      originResp = await fetch(real, fetchOpts);
+    } catch (error) {
+      console.error("Main stream upstream error", { itemId: id, message: String(error?.message || error || "") });
+      return new Response("Upstream error", { status: 502, headers: { "cache-control": "no-store" } });
     }
-  );
-
-  return new Response(
-    "Upstream error",
-    {
-      status: 502,
-      headers: {
-        "cache-control": "no-store",
-      },
-    }
-  );
-}
-
-
-    if (!originResp.ok && originResp.status !== 206) {
-      return new Response("Upstream unavailable", { status: 502 });
-    }
-
+    if (!originResp.ok && originResp.status !== 206) return new Response("Upstream unavailable", { status: 502 });
     const outHeaders = new Headers();
-    const copyHeader = (name) => {
-      const val = originResp.headers.get(name);
-      if (val) outHeaders.set(name, val);
-    };
-    copyHeader("Content-Type");
-    copyHeader("Content-Length");
-    copyHeader("Content-Range");
-    copyHeader("Accept-Ranges");
-    copyHeader("Last-Modified");
-    copyHeader("ETag");
-
+    const copyHeader = (name) => { const val = originResp.headers.get(name); if (val) outHeaders.set(name, val); };
+    copyHeader("Content-Type"); copyHeader("Content-Length"); copyHeader("Content-Range"); copyHeader("Accept-Ranges"); copyHeader("Last-Modified"); copyHeader("ETag");
     if (!outHeaders.has("Content-Type")) outHeaders.set("Content-Type", "video/mp4");
     if (!outHeaders.has("Accept-Ranges")) outHeaders.set("Accept-Ranges", "bytes");
     outHeaders.set("X-Content-Type-Options", "nosniff");
-
     if (v.d === 1) {
-        let downloadName = item.title || "video";
-        if (item.type === "series" && v.s !== -1 && v.e !== -1) {
-          const seasonNo = item.seasons?.[v.s]?.season || (v.s + 1);
-          const epNo = item.seasons?.[v.s]?.episodes?.[v.e]?.ep || (v.e + 1);
-          const sStr = String(seasonNo).padStart(2, "0");
-          const eStr = String(epNo).padStart(2, "0");
-          downloadName = `${downloadName} S${sStr}E${eStr}`;
-        }
-        // မြန်မာ Unicode စာလုံးများ ကျန်ရှိစေရန် — control char + path/quote အန္တရာယ်ရှိသော char များသာ ဖယ်
-        const safeName = downloadName
-          .replace(/[\x00-\x1F\x7F/\\:*?"<>|]+/g, " ")   // control + filesystem/HTTP အန္တရာယ် char
-          .replace(/\s+/g, " ")
-          .trim()
-          .slice(0, 80)
-          .trim() || "video";
-        const ext = real.split("?")[0].split(".").pop();
-        const extOk = /^[a-z0-9]{2,5}$/i.test(ext);
-        const fnameFull = extOk ? `${safeName}.${ext}` : `${safeName}.mp4`;
-
-        // ── ASCII fallback (မြန်မာစာ ဖြုတ်ထားတဲ့ ရိုးရိုး filename — header ideal မဟုတ်တဲ့ client အတွက်) ──
-        const asciiName = (safeName.replace(/[^\x20-\x7E]+/g, "_").replace(/\s+/g, "_").replace(/^_+|_+$/g, "") || "video");
-        const asciiFull = extOk ? `${asciiName}.${ext}` : `${asciiName}.mp4`;
-
-        // ── RFC 5987: filename* နဲ့ မြန်မာစာ (UTF-8) ကို မှန်မှန်ကန်ကန် ပို့ ──
-        const encodedFull = encodeURIComponent(fnameFull).replace(/['()*]/g, c => "%" + c.charCodeAt(0).toString(16).toUpperCase());
-        outHeaders.set(
-          "Content-Disposition",
-          `attachment; filename="${asciiFull}"; filename*=UTF-8''${encodedFull}`
-        );
-        outHeaders.set("Cache-Control", "private, no-store"); // download ကို cache မလုပ်
-        return new Response(originResp.body, { status: originResp.status, headers: outHeaders });
+      let downloadName = item.title || "video";
+      if (item.type === "series" && v.s !== -1 && v.e !== -1) {
+        const seasonNo = item.seasons?.[v.s]?.season || (v.s + 1);
+        const epNo = item.seasons?.[v.s]?.episodes?.[v.e]?.ep || (v.e + 1);
+        const sStr = String(seasonNo).padStart(2, "0"); const eStr = String(epNo).padStart(2, "0");
+        downloadName = `${downloadName} S${sStr}E${eStr}`;
+      }
+      const safeName = downloadName.replace(/[\x00-\x1F\x7F/\\:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 80).trim() || "video";
+      const ext = real.split("?")[0].split(".").pop();
+      const extOk = /^[a-z0-9]{2,5}$/i.test(ext);
+      const fnameFull = extOk ? `${safeName}.${ext}` : `${safeName}.mp4`;
+      const asciiName = (safeName.replace(/[^\x20-\x7E]+/g, "_").replace(/\s+/g, "_").replace(/^_+|_+$/g, "") || "video");
+      const asciiFull = extOk ? `${asciiName}.${ext}` : `${asciiName}.mp4`;
+      const encodedFull = encodeURIComponent(fnameFull).replace(/['()*]/g, c => "%" + c.charCodeAt(0).toString(16).toUpperCase());
+      outHeaders.set("Content-Disposition", `attachment; filename="${asciiFull}"; filename*=UTF-8''${encodedFull}`);
+      outHeaders.set("Cache-Control", "private, no-store");
+      return new Response(originResp.body, { status: originResp.status, headers: outHeaders });
     }
-
-// ── Playback fallback response ──
-// Signed response ကို public shared cache မလုပ်ဘူး။
-// Shared cache က အပေါ်က fetch(real, { cf: ... }) အဆင့်မှာ ရနေတယ်။
-outHeaders.set(
-  "Content-Disposition",
-  "inline"
-);
-
-outHeaders.set(
-  "Cache-Control",
-  "private, max-age=3600"
-);
-
-outHeaders.set(
-  "X-CMFlix-Cache",
-  originResp.headers.get(
-    "CF-Cache-Status"
-  ) || "UNKNOWN"
-);
-
-outHeaders.set(
-  "Access-Control-Allow-Origin",
-  `https://${url.host}`
-);
-
-outHeaders.set(
-  "Timing-Allow-Origin",
-  "*"
-);
-
-return new Response(
-  originResp.body,
-  {
-    status: originResp.status,
-    statusText: originResp.statusText,
-    headers: outHeaders,
-  });
-
+    outHeaders.set("Content-Disposition", "inline");
+    outHeaders.set("Cache-Control", "private, max-age=3600");
+    outHeaders.set("X-CMFlix-Cache", originResp.headers.get("CF-Cache-Status") || "UNKNOWN");
+    outHeaders.set("Access-Control-Allow-Origin", `https://${url.host}`);
+    outHeaders.set("Timing-Allow-Origin", "*");
+    return new Response(originResp.body, { status: originResp.status, statusText: originResp.statusText, headers: outHeaders });
   }
 
-    // ───────────── BOOKMARK TOGGLE ─────────────
   if (path === "/bookmark/toggle" && method === "POST") {
     const user = await getCurrentUser(request, env);
-
-    if (!user || user.isAdmin || isExpired(user)) {
-      return new Response(
-        JSON.stringify({
-          ok: false,
-          error: "login required",
-        }),
-        {
-          status: 403,
-          headers: {
-            "content-type": "application/json; charset=utf-8",
-            "cache-control": "no-store",
-          },
-        }
-      );
-    }
-
+    if (!user || user.isAdmin || isExpired(user)) return new Response(JSON.stringify({ ok: false, error: "login required" }), { status: 403, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
     const form = await parseForm(request);
-
-    if (!(await verifyCsrf(request, form))) {
-      return new Response(
-        JSON.stringify({
-          ok: false,
-          error: "csrf failed",
-        }),
-        {
-          status: 403,
-          headers: {
-            "content-type": "application/json; charset=utf-8",
-            "cache-control": "no-store",
-          },
-        }
-      );
-    }
-
+    if (!(await verifyCsrf(request, form))) return new Response(JSON.stringify({ ok: false, error: "csrf failed" }), { status: 403, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
     const itemId = String(form.id || "").trim();
-    const action = String(form.action || "add")
-      .trim()
-      .toLowerCase();
-
-    if (!itemId) {
-      return new Response(
-        JSON.stringify({
-          ok: false,
-          error: "no id",
-        }),
-        {
-          status: 400,
-          headers: {
-            "content-type": "application/json; charset=utf-8",
-            "cache-control": "no-store",
-          },
-        }
-      );
-    }
-
-    if (action !== "add" && action !== "remove") {
-      return new Response(
-        JSON.stringify({
-          ok: false,
-          error: "invalid action",
-        }),
-        {
-          status: 400,
-          headers: {
-            "content-type": "application/json; charset=utf-8",
-            "cache-control": "no-store",
-          },
-        }
-      );
-    }
-
+    const action = String(form.action || "add").trim().toLowerCase();
+    if (!itemId) return new Response(JSON.stringify({ ok: false, error: "no id" }), { status: 400, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
+    if (action !== "add" && action !== "remove") return new Response(JSON.stringify({ ok: false, error: "invalid action" }), { status: 400, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
     const item = await getItem(env, itemId);
-
-    if (!item) {
-      return new Response(
-        JSON.stringify({
-          ok: false,
-          error: "not found",
-        }),
-        {
-          status: 404,
-          headers: {
-            "content-type": "application/json; charset=utf-8",
-            "cache-control": "no-store",
-          },
-        }
-      );
-    }
-
+    if (!item) return new Response(JSON.stringify({ ok: false, error: "not found" }), { status: 404, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
     let nowOn = false;
-
-if (action === "remove") {
-  await removeBookmark(
-    env,
-    user.keyId,
-    itemId
-  );
-
-  nowOn = false;
-} else {
-  await addBookmark(
-    env,
-    user.keyId,
-    itemId
-  );
-
-  nowOn = true;
-}
-
-return new Response(
-  JSON.stringify({
-    ok: true,
-    bookmarked: nowOn,
-  }),
-  {
-    headers: {
-      "content-type":
-        "application/json; charset=utf-8",
-      "cache-control": "no-store",
-    },
-  }
-);
+    if (action === "remove") { await removeBookmark(env, user.keyId, itemId); nowOn = false; }
+    else { await addBookmark(env, user.keyId, itemId); nowOn = true; }
+    return new Response(JSON.stringify({ ok: true, bookmarked: nowOn }), { headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
   }
 
-  // ───────────── BOOKMARK CLEAR ALL ─────────────
   if (path === "/bookmark/clear" && method === "POST") {
     const user = await getCurrentUser(request, env);
-
-    if (!user || user.isAdmin || isExpired(user)) {
-      return new Response(
-        JSON.stringify({
-          ok: false,
-          error: "login required",
-        }),
-        {
-          status: 403,
-          headers: {
-            "content-type": "application/json; charset=utf-8",
-            "cache-control": "no-store",
-          },
-        }
-      );
-    }
-
+    if (!user || user.isAdmin || isExpired(user)) return new Response(JSON.stringify({ ok: false, error: "login required" }), { status: 403, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
     const form = await parseForm(request);
-
-    if (!(await verifyCsrf(request, form))) {
-      return new Response(
-        JSON.stringify({
-          ok: false,
-          error: "csrf failed",
-        }),
-        {
-          status: 403,
-          headers: {
-            "content-type": "application/json; charset=utf-8",
-            "cache-control": "no-store",
-          },
-        }
-      );
-    }
-
+    if (!(await verifyCsrf(request, form))) return new Response(JSON.stringify({ ok: false, error: "csrf failed" }), { status: 403, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
     await clearAllBookmarks(env, user.keyId);
-
-    return new Response(
-      JSON.stringify({
-        ok: true,
-      }),
-      {
-        headers: {
-          "content-type": "application/json; charset=utf-8",
-          "cache-control": "no-store",
-        },
-      }
-    );
+    return new Response(JSON.stringify({ ok: true }), { headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
   }
 
-
-  // ───────────── MY LIST (bookmarks) ─────────────
   if (path === "/mylist" && method === "GET") {
     const user = await getCurrentUser(request, env);
     if (!user) return Response.redirect(new URL("/login?next=/mylist", url).toString(), 302);
@@ -6831,110 +5036,37 @@ return new Response(
     if (csrfNew) headers["Set-Cookie"] = csrfCookieHeader(csrfToken);
     return new Response(myListPage(items, user, csrfToken), { headers });
   }
-// ───────────── ACTRESS PAGE (public) ─────────────
-if (path.startsWith("/actress/") && method === "GET") {
-  let slug = "";
 
-  try {
-    slug = decodeURIComponent(
-      path
-        .slice("/actress/".length)
-        .split("/")[0]
-    );
-  } catch (_) {
-    return new Response("Bad actress slug", {
-      status: 400,
-      headers: {
-        "content-type": "text/plain; charset=utf-8",
-        "cache-control": "no-store",
-      },
-    });
-  }
-
-  slug = actressNameToSlug(slug);
-
-  if (!slug) {
-    return Response.redirect(
-      new URL("/", url).toString(),
-      302
-    );
-  }
-
-  const user = await getCurrentUser(request, env);
-
-  const buildActressPage = async (pageUser) => {
-    const items = await listItemsByActressSlug(
-      env,
-      slug
-    );
-
-    let info = await getActressCache(
-      env,
-      slug
-    );
-
-    if (!info) {
-      let displayName = slug;
-
-      for (const item of items) {
-        const found = parseActressNames(
-          item.actress
-        ).find(
-          name =>
-            actressNameToSlug(name) === slug
-        );
-
-        if (found) {
-          displayName = found;
-          break;
+  if (path.startsWith("/actress/") && method === "GET") {
+    let slug = "";
+    try { slug = decodeURIComponent(path.slice("/actress/".length).split("/")[0]); }
+    catch (_) { return new Response("Bad actress slug", { status: 400, headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" } }); }
+    slug = actressNameToSlug(slug);
+    if (!slug) return Response.redirect(new URL("/", url).toString(), 302);
+    const user = await getCurrentUser(request, env);
+    const buildActressPage = async (pageUser) => {
+      const items = await listItemsByActressSlug(env, slug);
+      let info = await getActressCache(env, slug);
+      if (!info) {
+        let displayName = slug;
+        for (const item of items) {
+          const found = parseActressNames(item.actress).find(name => actressNameToSlug(name) === slug);
+          if (found) { displayName = found; break; }
         }
+        info = { slug, name: displayName, image: "", url: "" };
       }
-
-      info = {
-        slug,
-        name: displayName,
-        image: "",
-        url: "",
-      };
-    }
-
-    return actressPage(
-      info,
-      items,
-      pageUser
-    );
-  };
-
-  if (user) {
-    return htmlResponse(
-      await buildActressPage(user),
-      {
-        "Cache-Control": "private, no-store",
-      }
-    );
+      return actressPage(info, items, pageUser);
+    };
+    if (user) return htmlResponse(await buildActressPage(user), { "Cache-Control": "private, no-store" });
+    return cachedHtml(context, request, 300, () => buildActressPage(null));
   }
 
-  // Guest actress page ကို ၅ မိနစ် edge cache
-  return cachedHtml(
-    context,
-    request,
-    300,
-    () => buildActressPage(null)
-  );
-}
-
-
-
-  // ───────────── AUTH STATUS ─────────────
   if (path === "/auth/status" && method === "GET") {
     const cur = await getCurrentUser(request, env);
     const loggedIn = !!cur;
-    return new Response(JSON.stringify({ loggedIn, expired: loggedIn ? isExpired(cur) : false, isAdmin: !!(cur && cur.isAdmin) }), {
-      headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" },
-    });
+    return new Response(JSON.stringify({ loggedIn, expired: loggedIn ? isExpired(cur) : false, isAdmin: !!(cur && cur.isAdmin) }), { headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
   }
 
-  // ───────────── LOGIN ─────────────
   if (path === "/login") {
     const { token: csrfToken, isNew: csrfNew } = await getOrCreateCsrf(request, env);
     const nextUrl = safeNextPath(url.searchParams.get("next") || "/");
@@ -6948,11 +5080,7 @@ if (path.startsWith("/actress/") && method === "GET") {
     if (method === "POST") {
       await lazyCleanup(env);
       const rl = await rateLimitHit(env, `keylogin:${clientIp}`, KEY_LOGIN_MAX_ATTEMPTS, KEY_LOGIN_WINDOW_SEC);
-      if (rl.blocked) {
-        return new Response(keyLoginPage(csrfToken, "ကြိုးစားခြင်း များနေပါပြီ။ ၁၀ မိနစ်နောက်မှ ထပ်ကြိုးစားပါ"), {
-          headers: { "content-type": "text/html; charset=utf-8" }, status: 429,
-        });
-      }
+      if (rl.blocked) return new Response(keyLoginPage(csrfToken, "ကြိုးစားခြင်း များနေပါပြီ။ ၁၀ မိနစ်နောက်မှ ထပ်ကြိုးစားပါ"), { headers: { "content-type": "text/html; charset=utf-8" }, status: 429 });
       const form = await parseForm(request);
       if (!(await verifyCsrf(request, form))) {
         const headers = { "content-type": "text/html; charset=utf-8" };
@@ -6962,31 +5090,16 @@ if (path.startsWith("/actress/") && method === "GET") {
       const safeNext = safeNextPath(form.next || "/");
       const clientUuid = String(form.device_uuid || "").trim().slice(0, 80) || getCookie(request, "cmflix_duid");
       const rawKey = normalizeKey(form.key);
-      if (!rawKey) {
-        return new Response(keyLoginPage(csrfToken, "Key ထည့်ပါ။", "", safeNext), { headers: { "content-type": "text/html; charset=utf-8" }, status: 400 });
-      }
-            if (env.ADMIN_KEY && safeEqual(rawKey, normalizeKey(env.ADMIN_KEY))) {
-        // admin login အတွက် သီးသန့် rate limit (IP per 30 min ၅ ခါသာ)
+      if (!rawKey) return new Response(keyLoginPage(csrfToken, "Key ထည့်ပါ။", "", safeNext), { headers: { "content-type": "text/html; charset=utf-8" }, status: 400 });
+      if (env.ADMIN_KEY && safeEqual(rawKey, normalizeKey(env.ADMIN_KEY))) {
         const adminRl = await rateLimitHit(env, `adminlogin:${clientIp}`, 5, 1800);
-        if (adminRl.blocked) {
-          return new Response(keyLoginPage(csrfToken, "Admin login ကြိုးစားခြင်း များနေပါပြီ။ ၃၀ မိနစ်နောက်မှ ထပ်ကြိုးစားပါ။", "", safeNext), {
-            headers: { "content-type": "text/html; charset=utf-8" }, status: 429,
-          });
-        }
+        if (adminRl.blocked) return new Response(keyLoginPage(csrfToken, "Admin login ကြိုးစားခြင်း များနေပါပြီ။", "", safeNext), { headers: { "content-type": "text/html; charset=utf-8" }, status: 429 });
         const deviceShort = (await deviceIdFrom(request, clientUuid)).slice(0, 12);
         const sid = randomToken(8);
         const token = await createSessionToken("__ADMIN__", deviceShort, env.SESSION_SECRET, sid);
-        // ── admin session ကိုပါ D1 မှာ မှတ် → revoke လုပ်နိုင် + device-bind စစ်နိုင် ──
-        await recordSession(env, "__ADMIN__", sid, {
-          ua: request.headers.get("User-Agent") || "",
-          country: request.headers.get("CF-IPCountry") || "",
-          ip_prefix: ipNetworkPrefix(clientIp),
-          label: shortDeviceLabel(request),
-          admin: true,
-        });
+        await recordSession(env, "__ADMIN__", sid, { ua: request.headers.get("User-Agent") || "", country: request.headers.get("CF-IPCountry") || "", ip_prefix: ipNetworkPrefix(clientIp), label: shortDeviceLabel(request), admin: true });
         return new Response(null, { status: 302, headers: { "Location": "/admin", "Set-Cookie": setCookieHeader(COOKIE_NAME, token) } });
       }
-
       const keyObj = await getKey(env, rawKey);
       if (!keyObj) return new Response(keyLoginPage(csrfToken, "Key မှားနေပါတယ်", "", safeNext), { headers: { "content-type": "text/html; charset=utf-8" }, status: 401 });
       if (keyObj.disabled) return new Response(expiredPage("ဒီ Key ကို ပိတ်ထားပါသည်။"), { headers: { "content-type": "text/html; charset=utf-8" }, status: 403 });
@@ -6997,13 +5110,7 @@ if (path.startsWith("/actress/") && method === "GET") {
       const deviceShort = deviceId.slice(0, 12);
       const sid = randomToken(8);
       const token = await createSessionToken(rawKey, deviceShort, env.SESSION_SECRET, sid);
-      await recordSession(env, rawKey, sid, {
-        ua: request.headers.get("User-Agent") || "",
-        country: request.headers.get("CF-IPCountry") || "",
-        ip_prefix: ipNetworkPrefix(clientIp),
-        label: shortDeviceLabel(request),
-      });
-      // login အောင်မြင်ရင် — ဝင်လာတဲ့ စာမျက်နှာ (next) ဆီ ပြန်ပို့ပြီး welcome box ပြဖို့ flag ထည့်
+      await recordSession(env, rawKey, sid, { ua: request.headers.get("User-Agent") || "", country: request.headers.get("CF-IPCountry") || "", ip_prefix: ipNetworkPrefix(clientIp), label: shortDeviceLabel(request) });
       let dest = safeNext.startsWith("/") ? safeNext : "/";
       const sep = dest.includes("?") ? "&" : "?";
       dest = dest + sep + "welcome=1";
@@ -7011,38 +5118,28 @@ if (path.startsWith("/actress/") && method === "GET") {
     }
   }
 
-  // ───────────── LOGOUT ─────────────
   if (path === "/logout") {
     const cur = await getCurrentUser(request, env);
-    if (cur && cur.sid) {
-  await revokeSession(env, cur.keyId, cur.sid);
-}
+    if (cur && cur.sid) await revokeSession(env, cur.keyId, cur.sid);
     return new Response(null, { status: 302, headers: { "Location": "/login", "Set-Cookie": setCookieHeader(COOKIE_NAME, "", { maxAge: 0 }) } });
   }
 
-  // ───────────── ACCOUNT ─────────────
   if (path === "/account" && method === "GET") {
     const cur = await getCurrentUser(request, env);
     if (!cur) return Response.redirect(new URL("/login", url).toString(), 302);
     if (cur.isAdmin) return Response.redirect(new URL("/admin", url).toString(), 302);
     const showWelcome = url.searchParams.get("welcome") === "1";
-    return new Response(accountPage(cur, "", "", showWelcome),
-      { headers: { "content-type": "text/html; charset=utf-8" } }
-    );
+    return new Response(accountPage(cur, "", "", showWelcome), { headers: { "content-type": "text/html; charset=utf-8" } });
   }
 
-  // ───────────── ADMIN ─────────────
   if (path === "/admin" || path.startsWith("/admin/")) {
     const cur = await getCurrentUser(request, env);
     if (!cur || !cur.isAdmin) return Response.redirect(new URL("/login", url).toString(), 302);
     const { token: csrfToken, isNew: csrfNew } = await getOrCreateCsrf(request, env);
     const setCsrf = csrfNew ? { "Set-Cookie": csrfCookieHeader(csrfToken) } : {};
 
-    // TMDB lookup (JSON, admin only)
     if (path === "/admin/tmdb" && method === "GET") {
-      if (!tmdbConfigured(env)) {
-        return new Response(JSON.stringify({ ok: false, error: "TMDB_API_KEY မထည့်ရသေးပါ။" }), { headers: { "content-type": "application/json" } });
-      }
+      if (!tmdbConfigured(env)) return new Response(JSON.stringify({ ok: false, error: "TMDB_API_KEY မထည့်ရသေးပါ။" }), { headers: { "content-type": "application/json" } });
       const q = String(url.searchParams.get("q") || "").trim().slice(0, 100);
       const type = isValidCategory(url.searchParams.get("type")) ? url.searchParams.get("type") : "movie";
       if (!q) return new Response(JSON.stringify({ ok: false, error: "Title ထည့်ပါ။" }), { headers: { "content-type": "application/json" } });
@@ -7051,23 +5148,12 @@ if (path.startsWith("/actress/") && method === "GET") {
       return new Response(JSON.stringify({ ok: true, ...r }), { headers: { "content-type": "application/json", "cache-control": "no-store" } });
     }
 
-    // ADMIN DASHBOARD
     if (path === "/admin" && method === "GET") {
-      const res = await db(env).prepare(
-        "SELECT key_id, role, created_at, expires_at, note, disabled, devices FROM keys ORDER BY created_at DESC LIMIT 1000"
-      ).all();
+      const res = await db(env).prepare("SELECT key_id, role, created_at, expires_at, note, disabled, devices FROM keys ORDER BY created_at DESC LIMIT 1000").all();
       const keys = (res.results || []).map(r => {
         let devCount = 0;
         try { devCount = (JSON.parse(r.devices || "[]") || []).length; } catch (_) {}
-        return {
-          keyId: r.key_id,
-          role: r.role || "trial",
-          created_at: r.created_at || 0,
-          expires_at: r.expires_at || 0,
-          note: r.note || "",
-          disabled: !!r.disabled,
-          device_count: devCount,
-        };
+        return { keyId: r.key_id, role: r.role || "trial", created_at: r.created_at || 0, expires_at: r.expires_at || 0, note: r.note || "", disabled: !!r.disabled, device_count: devCount };
       });
       const now = Date.now();
       const stats = {
@@ -7083,19 +5169,15 @@ if (path.startsWith("/actress/") && method === "GET") {
       const itQuery = String(url.searchParams.get("itq") || "").trim().slice(0, 80);
       let itPage = parseInt(url.searchParams.get("itpage") || "1", 10);
       if (!Number.isFinite(itPage) || itPage < 1) itPage = 1;
-      // SQL level မှာ filter + LIMIT/OFFSET (item အကုန်မဆွဲ → D1 read ချွေတာ)
       const { items, total: itTotal } = await adminSearchItemsPaged(env, itQuery, itTypeValid, itPage, ADMIN_ITEMS_PER_PAGE);
       const itTotalPages = Math.max(1, Math.ceil(itTotal / ADMIN_ITEMS_PER_PAGE));
       if (itPage > itTotalPages) itPage = itTotalPages;
       const newKey = url.searchParams.get("newkey") || "";
       const info = url.searchParams.get("info") || "";
       const maintOn = await isMaintenanceOn(env);
-      return new Response(
-        adminPage(keys, stats, csrfToken, newKey, info, items, itPage, itTotalPages, itQuery, itTotal, isValidCategory(itType) ? itType : "", tmdbConfigured(env), draftCount, maintOn),
-        { headers: { "content-type": "text/html; charset=utf-8", ...setCsrf } }
-      );
+      return new Response(adminPage(keys, stats, csrfToken, newKey, info, items, itPage, itTotalPages, itQuery, itTotal, isValidCategory(itType) ? itType : "", tmdbConfigured(env), draftCount, maintOn), { headers: { "content-type": "text/html; charset=utf-8", ...setCsrf } });
     }
-        // ACTRESS lookup (JSON, admin only)
+
     if (path === "/admin/actress" && method === "GET") {
       const name = String(url.searchParams.get("name") || "").trim().slice(0, 80);
       if (!name) return new Response(JSON.stringify({ ok: false, error: "နာမည် ထည့်ပါ။" }), { headers: { "content-type": "application/json" } });
@@ -7103,8 +5185,6 @@ if (path.startsWith("/actress/") && method === "GET") {
       return new Response(JSON.stringify(r), { headers: { "content-type": "application/json", "cache-control": "no-store" } });
     }
 
-
-    // EDIT PAGE
     if (path.startsWith("/admin/edit/") && method === "GET") {
       const id = path.slice("/admin/edit/".length).split("/")[0];
       const item = await getItem(env, id);
@@ -7119,7 +5199,6 @@ if (path.startsWith("/actress/") && method === "GET") {
       return Response.redirect(dest.toString(), 302);
     };
 
-    // CREATE ITEM
     if (path === "/admin/item/create" && method === "POST") {
       const form = await parseForm(request);
       if (!(await verifyCsrf(request, form))) return new Response("CSRF failed", { status: 403 });
@@ -7133,13 +5212,9 @@ if (path.startsWith("/actress/") && method === "GET") {
       if (poster && !isHttpUrl(poster)) return redirectInfo("Poster link မှားနေပါတယ်။");
       if (slide_image && !isHttpUrl(slide_image)) return redirectInfo("Slide banner link မှားနေပါတယ်။");
       const id = generateItemId();
-      // save_mode=draft → published=0 (မပြ) ; ဒါမှမဟုတ် publish → published=1 (တန်းတင်)
       const isDraft = String(form.save_mode || "publish") === "draft";
       const data = { id, type, title, poster, slide_image, note, actress, created_at: Date.now(), published: isDraft ? 0 : 1 };
-      // မင်းသမီးနာမည်တွေအတွက် ပုံကို cache ထဲ ကြိုသိမ်း (watch page မှာ ပုံပေါ်ဖို့)
-      // ⬇️ item ကို အရင် save ပြီးမှ background (waitUntil) မှာ lookup လုပ် → response မကြာ + subrequest limit မဖိ
       const _actressNamesCreate = parseActressNames(actress);
-
       if (type === "series") {
         const r = sanitizeSeasons(form.seasons_json || "");
         if (!r.ok) return redirectInfo(r.err);
@@ -7153,21 +5228,15 @@ if (path.startsWith("/actress/") && method === "GET") {
         data.download_url = download_url || video_url;
       }
       await putItem(env, id, data);
-      // actress ပုံ lookup ကို background မှာ (response မစောင့်စေဘဲ) — subrequest limit မဖိ
       context.waitUntil((async () => {
         for (const nm of _actressNamesCreate) {
           const slug = actressNameToSlug(nm);
-          if (slug && !(await getActressCache(env, slug))) {
-            try { await lookupActress(env, nm); } catch (_) {}
-          }
+          if (slug && !(await getActressCache(env, slug))) { try { await lookupActress(env, nm); } catch (_) {} }
         }
       })());
-      return redirectInfo(isDraft
-        ? `"${title}" ကို Draft အဖြစ် သိမ်းပြီးပါပြီ (မပြသေးပါ)။`
-        : `"${title}" တင်ပြီးပါပြီ။`);
+      return redirectInfo(isDraft ? `"${title}" ကို Draft အဖြစ် သိမ်းပြီးပါပြီ။` : `"${title}" တင်ပြီးပါပြီ။`);
     }
 
-    // UPDATE ITEM
     if (path === "/admin/item/update" && method === "POST") {
       const form = await parseForm(request);
       if (!(await verifyCsrf(request, form))) return new Response("CSRF failed", { status: 403 });
@@ -7180,49 +5249,32 @@ if (path.startsWith("/actress/") && method === "GET") {
       const slide_image = String(form.slide_image || "").trim().slice(0, 600);
       const note = String(form.note || "").trim().slice(0, 5000);
       const actress = String(form.actress || "").trim().slice(0, 300);
-      if (!title) return new Response(adminEditPage(existing, csrfToken, "Title ဖြည့်ပါ။"),
-        { headers: { "content-type": "text/html; charset=utf-8" } });
-
-      if (poster && !isHttpUrl(poster)) return new Response(adminEditPage({ ...existing, type, title, poster, slide_image, note }, csrfToken, "Poster link မှားနေပါတယ်။"),
-        { headers: { "content-type": "text/html; charset=utf-8" } });
-
-      if (slide_image && !isHttpUrl(slide_image)) return new Response(adminEditPage({ ...existing, type, title, poster, slide_image, note }, csrfToken, "Slide banner link မှားနေပါတယ်။"),
-        { headers: { "content-type": "text/html; charset=utf-8" } });
-
-
-      // edit လုပ်တဲ့အခါ — မူရင်း published status ကို ဆက်ထိန်းထား (draft က draft အတိုင်း)
+      if (!title) return new Response(adminEditPage(existing, csrfToken, "Title ဖြည့်ပါ။"), { headers: { "content-type": "text/html; charset=utf-8" } });
+      if (poster && !isHttpUrl(poster)) return new Response(adminEditPage({ ...existing, type, title, poster, slide_image, note }, csrfToken, "Poster link မှားနေပါတယ်။"), { headers: { "content-type": "text/html; charset=utf-8" } });
+      if (slide_image && !isHttpUrl(slide_image)) return new Response(adminEditPage({ ...existing, type, title, poster, slide_image, note }, csrfToken, "Slide banner link မှားနေပါတယ်။"), { headers: { "content-type": "text/html; charset=utf-8" } });
       const data = { id, type, title, poster, slide_image, note, actress, created_at: existing.created_at || Date.now(), published: (existing.published == null ? 1 : existing.published) };
-      // actress ပုံ lookup ကို background (waitUntil) မှာ — response မစောင့်စေဘဲ subrequest limit မဖိ
       const _actressNamesUpdate = parseActressNames(actress);
       if (type === "series") {
         const r = sanitizeSeasons(form.seasons_json || "");
-        if (!r.ok) return new Response(adminEditPage({ ...existing, type, title, poster, slide_image, note }, csrfToken, r.err),
-          { headers: { "content-type": "text/html; charset=utf-8" } });
-
+        if (!r.ok) return new Response(adminEditPage({ ...existing, type, title, poster, slide_image, note }, csrfToken, r.err), { headers: { "content-type": "text/html; charset=utf-8" } });
         data.seasons = r.seasons;
       } else {
         const video_url = String(form.video_url || "").trim().slice(0, 1000);
         const download_url = String(form.download_url || "").trim().slice(0, 1000);
-        if (!isHttpUrl(video_url)) return new Response(adminEditPage({ ...existing, type, title, poster, slide_image, note }, csrfToken, "Video URL ဖြည့်ပါ။"),
-          { headers: { "content-type": "text/html; charset=utf-8" } });
-
+        if (!isHttpUrl(video_url)) return new Response(adminEditPage({ ...existing, type, title, poster, slide_image, note }, csrfToken, "Video URL ဖြည့်ပါ။"), { headers: { "content-type": "text/html; charset=utf-8" } });
         data.video_url = video_url;
         data.download_url = download_url || video_url;
       }
       await putItem(env, id, data);
-      // actress ပုံ lookup ကို background မှာ (response မစောင့်စေဘဲ) — subrequest limit မဖိ
       context.waitUntil((async () => {
         for (const nm of _actressNamesUpdate) {
           const slug = actressNameToSlug(nm);
-          if (slug && !(await getActressCache(env, slug))) {
-            try { await lookupActress(env, nm); } catch (_) {}
-          }
+          if (slug && !(await getActressCache(env, slug))) { try { await lookupActress(env, nm); } catch (_) {} }
         }
       })());
       return redirectInfo(`"${title}" ပြင်ဆင်ပြီးပါပြီ။`);
     }
 
-    // DELETE ITEM
     if (path === "/admin/item/delete" && method === "POST") {
       const form = await parseForm(request);
       if (!(await verifyCsrf(request, form))) return new Response("CSRF failed", { status: 403 });
@@ -7231,72 +5283,35 @@ if (path.startsWith("/actress/") && method === "GET") {
       return redirectInfo("Content ဖျက်ပြီးပါပြီ။");
     }
 
-    // PUBLISH ALL DRAFTS — Draft အားလုံးကို တစ်ခါတည်း တင်
     if (path === "/admin/item/publishall" && method === "POST") {
       const form = await parseForm(request);
       if (!(await verifyCsrf(request, form))) return new Response("CSRF failed", { status: 403 });
       const n = await publishAllDrafts(env);
-      return redirectInfo(n > 0 ? `Draft ${n} ကား အားလုံးကို Publish တင်ပြီးပါပြီ။ 🚀` : "Publish တင်စရာ Draft မရှိပါ။");
+      return redirectInfo(n > 0 ? `Draft ${n} ကား Publish တင်ပြီးပါပြီ။` : "Draft မရှိပါ။");
     }
-    
-    // MAINTENANCE MODE TOGGLE — admin web ကနေ on/off
+
     if (path === "/admin/maintenance" && method === "POST") {
       const form = await parseForm(request);
       if (!(await verifyCsrf(request, form))) return new Response("CSRF failed", { status: 403 });
       const turnOn = String(form.state || "") === "on";
       await setSetting(env, "maintenance", turnOn ? "1" : "0");
-      return redirectInfo(turnOn
-        ? "🔧 Maintenance mode ဖွင့်လိုက်ပါပြီ — user တွေ ဝင်လို့မရတော့ပါ (admin ပဲ ဝင်ရ)။"
-        : "✅ Maintenance mode ပိတ်လိုက်ပါပြီ — user တွေ ပြန်ဝင်လို့ရပါပြီ။");
+      return redirectInfo(turnOn ? "🔧 Maintenance mode ဖွင့်လိုက်ပါပြီ။" : "✅ Maintenance mode ပိတ်လိုက်ပါပြီ။");
     }
 
-
-    // CREATE KEY(S)
     if (path === "/admin/create" && method === "POST") {
       const form = await parseForm(request);
       if (!(await verifyCsrf(request, form))) return new Response("CSRF failed", { status: 403 });
-      const days =
-  Math.max(
-    1,
-    Math.min(
-      3650,
-      parseInt(form.days || "1", 10) || 1
-    )
-  );
-
-const role =
-  form.role === "paid"
-    ? "paid"
-    : "trial";
-
-const count =
-  Math.max(
-    1,
-    Math.min(
-      50,
-      parseInt(form.count || "1", 10) || 1
-    )
-  );
-
-const note =
-  String(form.note || "").slice(0, 60);
-
-const created =
-  await createKeysBatch(
-    env,
-    days,
-    count,
-    role,
-    note
-  );
-
+      const days = Math.max(1, Math.min(3650, parseInt(form.days || "1", 10) || 1));
+      const role = form.role === "paid" ? "paid" : "trial";
+      const count = Math.max(1, Math.min(50, parseInt(form.count || "1", 10) || 1));
+      const note = String(form.note || "").slice(0, 60);
+      const created = await createKeysBatch(env, days, count, role, note);
       const dest = new URL("/admin", url);
       if (count === 1) dest.searchParams.set("newkey", created[0]);
       else dest.searchParams.set("info", `${count} keys created`);
       return Response.redirect(dest.toString(), 302);
     }
 
-    // EXTEND
     if (path === "/admin/extend" && method === "POST") {
       const form = await parseForm(request);
       if (!(await verifyCsrf(request, form))) return new Response("CSRF failed", { status: 403 });
@@ -7312,40 +5327,23 @@ const created =
       return Response.redirect(new URL("/admin", url).toString(), 302);
     }
 
-    // RESET DEVICES
     if (path === "/admin/resetdevices" && method === "POST") {
       const form = await parseForm(request);
       if (!(await verifyCsrf(request, form))) return new Response("CSRF failed", { status: 403 });
       const keyId = normalizeKey(form.key);
-      const k =
-  await getKey(env, keyId);
-
-if (k) {
-  k.devices = [];
-
-  authCacheDeleteByKey(keyId);
-
-  await db(env).batch([
-    db(env).prepare(
-      "DELETE FROM kdev WHERE key_id=?"
-    ).bind(keyId),
-
-    db(env).prepare(
-      "DELETE FROM sessions WHERE key_id=?"
-    ).bind(keyId),
-
-    db(env).prepare(
-      `UPDATE keys
-       SET devices='[]'
-       WHERE key_id=?`
-    ).bind(keyId),
-  ]);
-}
-
+      const k = await getKey(env, keyId);
+      if (k) {
+        k.devices = [];
+        authCacheDeleteByKey(keyId);
+        await db(env).batch([
+          db(env).prepare("DELETE FROM kdev WHERE key_id=?").bind(keyId),
+          db(env).prepare("DELETE FROM sessions WHERE key_id=?").bind(keyId),
+          db(env).prepare("UPDATE keys SET devices='[]' WHERE key_id=?").bind(keyId),
+        ]);
+      }
       return Response.redirect(new URL("/admin", url).toString(), 302);
     }
 
-    // DELETE KEY
     if (path === "/admin/delete" && method === "POST") {
       const form = await parseForm(request);
       if (!(await verifyCsrf(request, form))) return new Response("CSRF failed", { status: 403 });
@@ -7354,7 +5352,6 @@ if (k) {
       return Response.redirect(new URL("/admin", url).toString(), 302);
     }
 
-    // BULK
     if (path === "/admin/bulk" && method === "POST") {
       const form = await parseForm(request);
       if (!(await verifyCsrf(request, form))) return new Response("CSRF failed", { status: 403 });
@@ -7376,71 +5373,39 @@ if (k) {
       return Response.redirect(new URL("/admin", url).toString(), 302);
     }
 
-    // EXPORT CSV
     if (path === "/admin/export" && method === "GET") {
-      const res = await db(env).prepare(
-        "SELECT key_id, role, created_at, expires_at, note, disabled, devices FROM keys ORDER BY created_at DESC LIMIT 5000"
-      ).all();
+      const res = await db(env).prepare("SELECT key_id, role, created_at, expires_at, note, disabled, devices FROM keys ORDER BY created_at DESC LIMIT 5000").all();
       const rows = [["key", "role", "created_at", "expires_at", "device_count", "note", "disabled"]];
       for (const r of (res.results || [])) {
         let devCount = 0;
         try { devCount = (JSON.parse(r.devices || "[]") || []).length; } catch (_) {}
-        rows.push([
-          r.key_id, r.role || "trial",
-          r.created_at ? new Date(r.created_at).toISOString() : "",
-          r.expires_at ? new Date(r.expires_at).toISOString() : "",
-          devCount, r.note || "", r.disabled ? "yes" : "no",
-        ]);
+        rows.push([r.key_id, r.role || "trial", r.created_at ? new Date(r.created_at).toISOString() : "", r.expires_at ? new Date(r.expires_at).toISOString() : "", devCount, r.note || "", r.disabled ? "yes" : "no"]);
       }
       const csv = rows.map(rw => rw.map(c => {
         const s = String(c == null ? "" : c);
         return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
       }).join(",")).join("\n");
-      return new Response(csv, {
-        headers: {
-          "content-type": "text/csv; charset=utf-8",
-          "content-disposition": `attachment; filename="cmflix-keys-${new Date().toISOString().slice(0, 10)}.csv"`,
-        },
-      });
+      return new Response(csv, { headers: { "content-type": "text/csv; charset=utf-8", "content-disposition": `attachment; filename="cmflix-keys-${new Date().toISOString().slice(0, 10)}.csv"` } });
     }
   }
 
-  // ───────────── 404 ─────────────
-  return new Response(pageShell("404 — CM FLIX", `${topBar("")}<div class="wrap"><div class="empty">404 · ဒီစာမျက်နှာ ရှာမတွေ့ပါ · <a href="/" style="color:var(--acc2)">Home သို့</a></div></div>`), {
-    headers: { "content-type": "text/html; charset=utf-8" }, status: 404,
-  });
+  return new Response(pageShell("404 — CM FLIX", `${topBar("")}<div class="wrap"><div class="empty">404 · ဒီစာမျက်နှာ ရှာမတွေ့ပါ · <a href="/" style="color:var(--acc2)">Home သို့</a></div></div>`), { headers: { "content-type": "text/html; charset=utf-8" }, status: 404 });
 }
+
 function hardenResponse(response) {
   const headers = new Headers(response.headers);
   const contentType = headers.get("content-type") || "";
-
   headers.set("X-Content-Type-Options", "nosniff");
   headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
-  headers.set(
-    "Permissions-Policy",
-    "geolocation=(), microphone=(), camera=(), payment=(), usb=()"
-  );
-  headers.set(
-    "Strict-Transport-Security",
-    "max-age=63072000; includeSubDomains; preload"
-  );
-
+  headers.set("Permissions-Policy", "geolocation=(), microphone=(), camera=(), payment=(), usb=()");
+  headers.set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload");
   if (contentType.includes("text/html")) {
     headers.set("X-Frame-Options", "DENY");
     headers.set("Cross-Origin-Opener-Policy", "same-origin");
     headers.set("Content-Security-Policy", CSP_POLICY);
-
-    // Personalized page တွေ shared cache ထဲ မရောက်အောင်
-    if (!headers.has("Cache-Control")) {
-      headers.set("Cache-Control", "private, no-store");
-    }
+    if (!headers.has("Cache-Control")) headers.set("Cache-Control", "private, no-store");
   }
-
-  return new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers,
-  });
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
 export async function onRequest(context) {
@@ -7449,15 +5414,6 @@ export async function onRequest(context) {
     return hardenResponse(response);
   } catch (error) {
     console.error("Unhandled route error", error);
-
-    return hardenResponse(
-      new Response("Internal Server Error", {
-        status: 500,
-        headers: {
-          "content-type": "text/plain; charset=utf-8",
-          "cache-control": "no-store",
-        },
-      })
-    );
+    return hardenResponse(new Response("Internal Server Error", { status: 500, headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" } }));
   }
 }
