@@ -4831,13 +4831,13 @@ async function routeRequest(context) {
     if (user || showWelcome) {
       const hp = await listHomePreview(env, HOME_PREVIEW_COUNT, 6);
       const sections = [{ type: "movie", items: hp.movie }, { type: "series", items: hp.series }, { type: "adult", items: hp.adult }, { type: "random", items: hp.random }];
-      const slides = hp.slides.map(i => ({ image: i.slide_image || i.poster, title: i.title, desc: (CATEGORIES[i.type] || CATEGORIES.movie).name, tag: (CATEGORIES[i.type] || CATEGORIES.movie).name.toUpperCase(), link: "/watch/" + i.id }));
+      const slides = [];
       return new Response(homePage(slides, sections, user, showWelcome), { headers: { "content-type": "text/html; charset=utf-8" } });
     }
     return cachedHtml(context, request, 300, async () => {
       const hp = await listHomePreview(env, HOME_PREVIEW_COUNT, 6);
       const sections = [{ type: "movie", items: hp.movie }, { type: "series", items: hp.series }, { type: "adult", items: hp.adult }, { type: "random", items: hp.random }];
-      const slides = hp.slides.map(i => ({ image: i.slide_image || i.poster, title: i.title, desc: (CATEGORIES[i.type] || CATEGORIES.movie).name, tag: (CATEGORIES[i.type] || CATEGORIES.movie).name.toUpperCase(), link: "/watch/" + i.id }));
+      const slides = [];
       return homePage(slides, sections, null, false);
     });
   }
