@@ -30,39 +30,8 @@ const DEVICE_TOUCH_INTERVAL_MS = 6 * 3600 * 1000;
 const MAINTENANCE_CACHE_TTL_MS = 60 * 1000;
 
 // ── Contact (Admin) ──
-const CONTACT_TELEGRAM = "iqowoq";
-const CONTACT_VIBER    = "09688171999";
-
-const PREMIUM_PLANS = [
-  {
-    id: "1-month",
-    title: "1 Month",
-    duration: "30 Days",
-    price: "800 Ks",
-    featured: false,
-  },
-  {
-    id: "3-month",
-    title: "3 Months",
-    duration: "90 Days",
-    price: "2,000 Ks",
-    featured: true,
-  },
-  {
-    id: "5-month",
-    title: "5 Months",
-    duration: "150 Days",
-    price: "3,500 Ks",
-    featured: false,
-  },
-  {
-    id: "1-year",
-    title: "1 Year",
-    duration: "365 Days",
-    price: "8,000 Ks",
-    featured: false,
-  },
-];
+const CONTACT_TELEGRAM = "iqowoq";          // @ မပါဘဲ username ပဲ
+const CONTACT_VIBER    = "09688171999";     // Viber phone number
 // ════════════════════════════════════════════════════════════════
 
 // ════════════════════════════════════════════════════════════════
@@ -2659,7 +2628,7 @@ ${opts.script ? `<script>${opts.script}</script>` : ""}
 
 const AUTH_CSS = `
   .auth-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
-  .auth-card{background:rgba(13,20,36,.94);backdrop-filter:blur(12px);border:1px solid var(--line);border-radius:20px;padding:34px;width:100%;max-width:480px;box-shadow:0 22px 60px rgba(0,0,0,.65)}
+  .auth-card{background:rgba(13,20,36,.94);backdrop-filter:blur(12px);border:1px solid var(--line);border-radius:20px;padding:34px;width:100%;max-width:440px;box-shadow:0 22px 60px rgba(0,0,0,.65)}
   .auth-card .auth-logo{display:flex;justify-content:center;margin-bottom:18px}
   .auth-card .auth-logo .mark{width:54px;height:54px;flex:0 0 54px;border-radius:15px}
   .auth-card .auth-logo .mark svg{width:30px;height:30px}
@@ -2735,235 +2704,6 @@ function footer() {
     <div style="margin-top:14px">© ${new Date().getFullYear()} <b>CM FLIX</b> · All rights reserved.</div>
   </div>`;
 }
-const PREMIUM_PRICING_CSS = `
-  .pricing-box{
-    margin:18px 0;
-    padding:18px;
-    border-radius:18px;
-    background:
-      radial-gradient(
-        500px 180px at 50% 0%,
-        rgba(229,9,20,.14),
-        transparent
-      ),
-      linear-gradient(
-        180deg,
-        rgba(18,24,44,.96),
-        rgba(10,15,29,.96)
-      );
-    border:1px solid var(--line);
-    box-shadow:0 16px 42px rgba(0,0,0,.35);
-  }
-
-  .pricing-head{
-    text-align:center;
-    margin-bottom:14px;
-  }
-
-  .pricing-head h2{
-    margin:0 0 5px;
-    font-size:17px;
-    font-weight:900;
-    color:#fff;
-  }
-
-  .pricing-head p{
-    margin:0;
-    color:var(--mut);
-    font-size:12px;
-    line-height:1.5;
-  }
-
-  .pricing-grid{
-    display:grid;
-    grid-template-columns:
-      repeat(2,minmax(0,1fr));
-    gap:9px;
-  }
-
-  .price-plan{
-    position:relative;
-    padding:14px 10px;
-    text-align:center;
-    border-radius:13px;
-    background:#0b1120;
-    border:1px solid var(--line);
-    overflow:hidden;
-  }
-
-  .price-plan.featured{
-    border-color:#ff2e54;
-    background:
-      linear-gradient(
-        145deg,
-        rgba(229,9,20,.18),
-        rgba(15,22,40,.95)
-      );
-    box-shadow:
-      0 8px 22px rgba(229,9,20,.18);
-  }
-
-  .price-best{
-    position:absolute;
-    top:0;
-    right:0;
-    padding:3px 8px;
-    border-radius:0 0 0 8px;
-    background:
-      linear-gradient(
-        135deg,
-        var(--acc),
-        var(--acc2)
-      );
-    color:#fff;
-    font-size:8.5px;
-    font-weight:900;
-    letter-spacing:.5px;
-  }
-
-  .price-title{
-    font-size:13px;
-    color:#eef2ff;
-    font-weight:800;
-    margin-bottom:3px;
-  }
-
-  .price-duration{
-    font-size:10px;
-    color:var(--mut);
-    margin-bottom:8px;
-  }
-
-  .price-amount{
-    color:#fff;
-    font-size:18px;
-    font-weight:950;
-    letter-spacing:.2px;
-  }
-
-  .price-plan.featured .price-amount{
-    color:#ff7189;
-  }
-
-  .pricing-buy{
-    display:flex;
-    align-items:center;
-    justify-content:center;
-    gap:8px;
-    width:100%;
-    margin-top:13px;
-    padding:11px 14px;
-    border-radius:11px;
-    text-decoration:none;
-    color:#fff;
-    font-size:13px;
-    font-weight:850;
-    background:
-      linear-gradient(
-        135deg,
-        #229ed9,
-        #37b6ee
-      );
-    box-shadow:
-      0 6px 16px rgba(34,158,217,.28);
-    transition:
-      transform .15s,
-      filter .15s;
-  }
-
-  @media (hover:hover) and (pointer:fine){
-    .pricing-buy:hover{
-      transform:translateY(-1px);
-      filter:brightness(1.08);
-    }
-  }
-
-  .pricing-note{
-    margin-top:9px;
-    text-align:center;
-    font-size:10.5px;
-    color:var(--mut);
-    line-height:1.5;
-  }
-
-  @media(max-width:380px){
-    .pricing-grid{
-      grid-template-columns:1fr;
-    }
-  }
-`;
-
-function premiumPricingHtml(
-  heading = "Premium Plans"
-) {
-  const telegramUrl =
-    `https://t.me/${
-      encodeURIComponent(
-        CONTACT_TELEGRAM
-      )
-    }`;
-
-  const plans =
-    PREMIUM_PLANS
-      .map(plan => `
-        <div class="price-plan${
-          plan.featured
-            ? " featured"
-            : ""
-        }">
-          ${
-            plan.featured
-              ? `<span class="price-best">POPULAR</span>`
-              : ""
-          }
-
-          <div class="price-title">
-            ${htmlEscape(plan.title)}
-          </div>
-
-          <div class="price-duration">
-            ${htmlEscape(plan.duration)}
-          </div>
-
-          <div class="price-amount">
-            ${htmlEscape(plan.price)}
-          </div>
-        </div>
-      `)
-      .join("");
-
-  return `
-    <div class="pricing-box">
-      <div class="pricing-head">
-        <h2>💎 ${htmlEscape(heading)}</h2>
-        <p>
-          Premium Key ဝယ်ယူပြီး
-          ဇာတ်ကားများကို အပြည့်အဝကြည့်ရှုပါ
-        </p>
-      </div>
-
-      <div class="pricing-grid">
-        ${plans}
-      </div>
-
-      <a
-        class="pricing-buy"
-        href="${telegramUrl}"
-        target="_blank"
-        rel="noopener noreferrer"
-      >
-        Telegram မှ ဝယ်ယူရန်
-      </a>
-
-      <div class="pricing-note">
-        Key တစ်ခုလျှင် Device
-        ${MAX_DEVICES_PER_KEY} လုံးအထိ
-        အသုံးပြုနိုင်သည်
-      </div>
-    </div>
-  `;
-}
-
 
 function cardHtml(it) {
   return `
@@ -4411,9 +4151,6 @@ function keyLoginPage(csrfToken, error = "", info = "", nextUrl = "/") {
   <div class="auth-logo">${logoMark()}</div>
   <h1>CM FLIX — Key Login</h1>
   <p class="sub">Admin ထံမှ ရရှိသော Key ထည့်ပြီး ဝင်ပါ။ Username / Password မလိုပါ။</p>
-
-  ${premiumPricingHtml("CM FLIX Premium")}
-
   ${error ? `<div class="err">${htmlEscape(error)}</div>` : ""}
   ${info ? `<div class="ok">${htmlEscape(info)}</div>` : ""}
   <form method="POST" action="/login" autocomplete="off" id="keyForm">
@@ -4439,16 +4176,7 @@ function keyLoginPage(csrfToken, error = "", info = "", nextUrl = "/") {
   var f=document.getElementById('keyForm');
   if(f) f.addEventListener('submit',function(){ var b=f.querySelector('button'); if(b){b.disabled=true;b.innerHTML='<span class="spinner"></span>စောင့်ပါ...';} });
 })();`;
-  return pageShell(
-    "Login — CM FLIX",
-    body,
-    {
-      extraCss:
-        AUTH_CSS +
-        PREMIUM_PRICING_CSS,
-      script,
-    }
-  );
+  return pageShell("Login — CM FLIX", body, { extraCss: AUTH_CSS, script });
 }
 
 function expiredPage(reason = "") {
@@ -4562,12 +4290,6 @@ function accountPage(user, info = "", error = "", showWelcome = false) {
       </div>
     </div>
 
-    ${premiumPricingHtml(
-      expired
-        ? "Premium သက်တမ်းတိုးရန်"
-        : "Premium Plans"
-    )}
-
     <div class="acc-section">
       <div class="acc-section-head">
         <span class="acc-section-title">${phoneSvg} ချိတ်ဆက်ထားသော Device</span>
@@ -4676,16 +4398,7 @@ function accountPage(user, info = "", error = "", showWelcome = false) {
     }
   `;
 
-  return pageShell(
-    "My Key — CM FLIX",
-    body,
-    {
-      extraCss:
-        AUTH_CSS +
-        accCss +
-        PREMIUM_PRICING_CSS,
-    }
-  );
+  return pageShell("My Key — CM FLIX", body, { extraCss: AUTH_CSS + accCss });
 }
 /* ══════════════════════════════════════════════════
    ADMIN PAGE + EDIT + SEASONS SANITIZER + ROUTER
@@ -5239,179 +4952,43 @@ function sanitizeSeasons(rawInput) {
 /* ══════════════════════════════════════════════════
    Build signed streams for watchPage
    ══════════════════════════════════════════════════ */
-async function buildStreams(
-  env,
-  item,
-  gated,
-  user,
-  request
-) {
+async function buildStreams(env, item, gated, user) {
   if (gated) {
-    if (item.type === "series") {
-      return {
-        seasons: [],
-        lazy: true,
-        initialEpisode: null,
-      };
-    }
-
-    return {
-      single: {
-        video: "",
-        dl: "",
-      },
-    };
+    if (item.type === "series") return { seasons: [], lazy: true, initialEpisode: null };
+    return { single: { video: "", dl: "" } };
   }
-
-  const u =
-    await userStreamTag(user);
-
-  const b =
-    await browserStreamTag(request);
-
   if (item.type === "series") {
-    const seasons =
-      Array.isArray(item.seasons)
-        ? item.seasons
-        : [];
-
+    const seasons = Array.isArray(item.seasons) ? item.seasons : [];
     let firstEpisode = null;
-
-    for (
-      let seasonIndex = 0;
-      seasonIndex < seasons.length;
-      seasonIndex++
-    ) {
-      const episodes =
-        Array.isArray(
-          seasons[seasonIndex]?.episodes
-        )
-          ? seasons[seasonIndex].episodes
-          : [];
-
-      for (
-        let episodeIndex = 0;
-        episodeIndex < episodes.length;
-        episodeIndex++
-      ) {
-        const realVideoUrl =
-          resolveRealUrl(
-            item,
-            seasonIndex,
-            episodeIndex,
-            false
-          );
-
-        if (!isHttpUrl(realVideoUrl)) {
-          continue;
-        }
-
-        const episode =
-          episodes[episodeIndex];
-
+    for (let seasonIndex = 0; seasonIndex < seasons.length; seasonIndex++) {
+      const episodes = Array.isArray(seasons[seasonIndex]?.episodes) ? seasons[seasonIndex].episodes : [];
+      for (let episodeIndex = 0; episodeIndex < episodes.length; episodeIndex++) {
+        const realVideoUrl = resolveRealUrl(item, seasonIndex, episodeIndex, false);
+        if (!isHttpUrl(realVideoUrl)) continue;
+        const episode = episodes[episodeIndex];
         firstEpisode = {
-          s: seasonIndex,
-          e: episodeIndex,
-          title: String(
-            episode?.title ||
-            `Episode ${
-              episode?.ep ||
-              episodeIndex + 1
-            }`
-          ).slice(0, 200),
+          s: seasonIndex, e: episodeIndex,
+          title: String(episode?.title || `Episode ${episode?.ep || episodeIndex + 1}`).slice(0, 200),
         };
-
         break;
       }
-
-      if (firstEpisode) {
-        break;
-      }
+      if (firstEpisode) break;
     }
-
-    if (!firstEpisode) {
-      return {
-        seasons: [],
-        lazy: true,
-        initialEpisode: null,
-      };
-    }
-
-    const [video, dl] =
-      await Promise.all([
-        makeStreamUrl(
-          env,
-          item.id,
-          {
-            s: firstEpisode.s,
-            e: firstEpisode.e,
-            download: false,
-            u,
-            b,
-          }
-        ),
-
-        makeStreamUrl(
-          env,
-          item.id,
-          {
-            s: firstEpisode.s,
-            e: firstEpisode.e,
-            download: true,
-            u,
-            b,
-          }
-        ),
-      ]);
-
-    return {
-      seasons: [],
-      lazy: true,
-      initialEpisode: {
-        s: firstEpisode.s,
-        e: firstEpisode.e,
-        title: firstEpisode.title,
-        video,
-        dl,
-      },
-    };
-  }
-
-  const [video, dl] =
-    await Promise.all([
-      makeStreamUrl(
-        env,
-        item.id,
-        {
-          s: -1,
-          e: -1,
-          download: false,
-          u,
-          b,
-        }
-      ),
-
-      makeStreamUrl(
-        env,
-        item.id,
-        {
-          s: -1,
-          e: -1,
-          download: true,
-          u,
-          b,
-        }
-      ),
+    if (!firstEpisode) return { seasons: [], lazy: true, initialEpisode: null };
+    const u = await userStreamTag(user);
+    const [video, dl] = await Promise.all([
+      makeStreamUrl(env, item.id, { s: firstEpisode.s, e: firstEpisode.e, download: false, u }),
+      makeStreamUrl(env, item.id, { s: firstEpisode.s, e: firstEpisode.e, download: true, u }),
     ]);
-
-  return {
-    single: {
-      video,
-      dl,
-    },
-  };
+    return { seasons: [], lazy: true, initialEpisode: { s: firstEpisode.s, e: firstEpisode.e, title: firstEpisode.title, video, dl } };
+  }
+  const u = await userStreamTag(user);
+  const [video, dl] = await Promise.all([
+    makeStreamUrl(env, item.id, { s: -1, e: -1, download: false, u }),
+    makeStreamUrl(env, item.id, { s: -1, e: -1, download: true, u }),
+  ]);
+  return { single: { video, dl } };
 }
-
 
 function resolveRealUrl(item, s, e, download) {
   if (item.type === "series") {
@@ -5518,38 +5095,11 @@ async function routeRequest(context) {
     if (!episode) return new Response(JSON.stringify({ ok: false, error: "Episode not found" }), { status: 404, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
     const realVideo = resolveRealUrl(item, seasonIndex, episodeIndex, false);
     if (!isHttpUrl(realVideo)) return new Response(JSON.stringify({ ok: false, error: "Episode source missing" }), { status: 404, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
-    const userTag =
-      await userStreamTag(user);
-
-    const browserTag =
-      await browserStreamTag(request);
-
-    const [video, dl] =
-      await Promise.all([
-        makeStreamUrl(
-          env,
-          item.id,
-          {
-            s: seasonIndex,
-            e: episodeIndex,
-            download: false,
-            u: userTag,
-            b: browserTag,
-          }
-        ),
-
-        makeStreamUrl(
-          env,
-          item.id,
-          {
-            s: seasonIndex,
-            e: episodeIndex,
-            download: true,
-            u: userTag,
-            b: browserTag,
-          }
-        ),
-      ]);
+    const userTag = await userStreamTag(user);
+    const [video, dl] = await Promise.all([
+      makeStreamUrl(env, item.id, { s: seasonIndex, e: episodeIndex, download: false, u: userTag }),
+      makeStreamUrl(env, item.id, { s: seasonIndex, e: episodeIndex, download: true, u: userTag }),
+    ]);
     return new Response(JSON.stringify({ ok: true, video, dl, expires_in: STREAM_TTL_SEC }), { headers: { "content-type": "application/json; charset=utf-8", "cache-control": "private, no-store", "X-Content-Type-Options": "nosniff" } });
   }
 
@@ -5562,13 +5112,7 @@ async function routeRequest(context) {
       return new Response(pageShell("Not found", `${topBar("", "", user)}<div class="wrap"><div class="empty">ဇာတ်ကား ရှာမတွေ့ပါ · <a href="/" style="color:var(--acc2)">Home</a></div></div>`), { status: 404, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "private, no-store" } });
     }
     const gated = !user || isExpired(user);
-    const streams = await buildStreams(
-      env,
-      item,
-      gated,
-      user,
-      request
-    );
+    const streams = await buildStreams(env, item, gated, user);
     const bookmarked = (user && !user.isAdmin) ? await isBookmarked(env, user.keyId, item.id) : false;
     const actresses = [];
     for (const nm of parseActressNames(item.actress)) {
@@ -5591,41 +5135,8 @@ async function routeRequest(context) {
     if (!v.ok) return new Response(v.reason === "expired" ? "Link expired" : "Invalid link", { status: 403 });
     const user = await getCurrentUser(request, env);
     if (!user || isExpired(user)) return new Response("Login required", { status: 403 });
-    const u =
-      await userStreamTag(user);
-
-    if (
-      !v.u ||
-      !safeEqual(v.u, u)
-    ) {
-      return new Response(
-        "Link not valid for this session",
-        {
-          status: 403,
-          headers: {
-            "cache-control": "no-store",
-          },
-        }
-      );
-    }
-
-    const browserTag =
-      await browserStreamTag(request);
-
-    if (
-      !v.b ||
-      !safeEqual(v.b, browserTag)
-    ) {
-      return new Response(
-        "Link not valid for this browser",
-        {
-          status: 403,
-          headers: {
-            "cache-control": "no-store",
-          },
-        }
-      );
-    }
+    const u = await userStreamTag(user);
+    if (!v.u || !safeEqual(v.u, u)) return new Response("Link not valid for this session", { status: 403 });
     const originHost = url.host;
     const referer = request.headers.get("Referer") || "";
     const originHdr = request.headers.get("Origin") || "";
@@ -6112,5 +5623,3 @@ export async function onRequest(context) {
     return hardenResponse(new Response("Internal Server Error", { status: 500, headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" } }));
   }
 }
-
-
