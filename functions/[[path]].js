@@ -1202,7 +1202,10 @@ function generateItemId() {
 }
 
 function rowToItem(row) {
-  if (!row) return null;
+  if (!row) {
+    return null;
+  }
+
   const item = {
     id: row.id,
     type: row.type || "movie",
@@ -1212,13 +1215,48 @@ function rowToItem(row) {
     note: row.note || "",
     actress: row.actress || "",
     created_at: row.created_at || 0,
-    video_url: row.video_url || "",
-    download_url: row.download_url || "",
-    published: (row.published == null ? 1 : (row.published ? 1 : 0)),
+    video_url: "",
+    download_url: "",
+    published:
+      row.published == null
+        ? 1
+        : row.published
+          ? 1
+          : 0,
   };
+
   if (item.type === "series") {
-    try { item.seasons = JSON.parse(row.seasons || "[]"); } catch (_) { item.seasons = []; }
+    /*
+     * Database ထဲမှာ ပျက်နေပြီးသား seasons JSON ကို
+     * ဖတ်တဲ့အချိန် sanitize လုပ်ပေးမယ်။
+     */
+    const normalized =
+      sanitizeSeasons(
+        row.seasons || "[]"
+      );
+
+    item.seasons =
+      normalized.ok
+        ? normalized.seasons
+        : [];
+  } else {
+    /*
+     * Single movie URL တွေလည်း duplicate filepath
+     * ဝင်နေပါက ဖတ်ချိန်မှာ clean လုပ်မယ်။
+     */
+    item.video_url =
+      cleanMediaUrl(
+        row.video_url || ""
+      );
+
+    item.download_url =
+      cleanMediaUrl(
+        row.download_url ||
+        row.video_url ||
+        ""
+      );
   }
+
   return item;
 }
 
@@ -4790,57 +4828,335 @@ function adminEditPage(item, csrfToken, error = "") {
 /* ══════════════════════════════════════════════════
    AUTO-PARSE SQL LOGS & SERIES JSON SANITIZER
    ══════════════════════════════════════════════════ */
-function parseRawTextToSeasons(rawText) {
+/*
+ * Video URL အဖြစ် လက်ခံမည့် file extensions။
+ *
+ * Raw SQLite/binary log ထဲမှာ:
+ *
+ *   https://...video.mp4video.mp4/storage/emulated/...
+ *
+ * လိုမျိုး ဆက်ကပ်နေပါက ပထမဆုံး media extension
+ * အဆုံးမှာ URL ကိုဖြတ်ပေးမယ်။
+ */
+const MEDIA_FILE_EXTENSION_RE =
+  /\.(?:mp4|mkv|webm|m4v|mov|m3u8)/i;
+
+const HTTP_START_RE =
+  /https?:\/\//gi;
+
+/*
+ * Raw text ထဲက HTTP/HTTPS URL တစ်ခုချင်းစီကို ရှာပြီး
+ * ပထမ media extension အဆုံးမှာ ဖြတ်ပေးသည်။
+ */
+function extractCleanMediaUrls(rawText) {
   const text = String(rawText || "");
-  const urlRegex = /https?:\/\/[^\s"'<>^|`\x00-\x1F\x7F-\x9F]+/gi;
-  const rawMatches = text.match(urlRegex) || [];
-  const cleanedUrls = rawMatches
-    .map(value => String(value).replace(/[),.;\]}]+$/g, "").trim())
-    .filter(value => isHttpUrl(value))
-    .map(value => value.slice(0, 1000));
-  const matches = [...new Set(cleanedUrls)];
-  if (!matches.length) return null;
+
+  if (!text) {
+    return [];
+  }
+
+  const starts = [];
+
+  HTTP_START_RE.lastIndex = 0;
+
+  let startMatch;
+
+  while (
+    (startMatch = HTTP_START_RE.exec(text)) !== null
+  ) {
+    starts.push(startMatch.index);
+
+    /*
+     * Regex loop မတော်တဆ zero-length မဖြစ်အောင်။
+     */
+    if (
+      HTTP_START_RE.lastIndex ===
+      startMatch.index
+    ) {
+      HTTP_START_RE.lastIndex++;
+    }
+  }
+
+  if (!starts.length) {
+    return [];
+  }
+
+  const results = [];
+
+  for (
+    let index = 0;
+    index < starts.length;
+    index++
+  ) {
+    const start = starts[index];
+
+    const nextStart =
+      index + 1 < starts.length
+        ? starts[index + 1]
+        : text.length;
+
+    /*
+     * နောက် URL မစခင်အထိကို candidate အဖြစ်ယူမယ်။
+     * Candidate ထဲ binary/control character ရှိရင်
+     * အဲ့ဒီနေရာမှာထပ်ဖြတ်မယ်။
+     */
+    let candidate =
+      text.slice(start, nextStart);
+
+    const hardStop =
+      candidate.search(
+        /[\s"'<>^|`\x00-\x1F\x7F-\x9F]/
+      );
+
+    if (hardStop >= 0) {
+      candidate =
+        candidate.slice(0, hardStop);
+    }
+
+    const extensionMatch =
+      candidate.match(
+        MEDIA_FILE_EXTENSION_RE
+      );
+
+    if (!extensionMatch) {
+      /*
+       * Raw log ထဲက URL ဆိုရင် media extension မရှိတာကို
+       * video URL အဖြစ် မယူပါ။
+       */
+      continue;
+    }
+
+    const extensionEnd =
+      extensionMatch.index +
+      extensionMatch[0].length;
+
+    let cleaned =
+      candidate.slice(0, extensionEnd);
+
+    /*
+     * တကယ့် signed origin URL က
+     * video.mp4?token=... ပုံစံဖြစ်နိုင်လို့
+     * extension နောက်က query/hash ကိုသာ ထပ်ထည့်မယ်။
+     *
+     * filename duplicate၊ Android filepath၊ unknown စတာတွေကို
+     * query အဖြစ် မယူပါ။
+     */
+    const remainder =
+      candidate.slice(extensionEnd);
+
+    if (
+      remainder.startsWith("?") ||
+      remainder.startsWith("#")
+    ) {
+      let queryPart = remainder;
+
+      const badMarker =
+        queryPart.search(
+          /(?:https?:\/\/|\/storage\/emulated\/|\{\}|unknown|\/Android\/data\/)/i
+        );
+
+      if (badMarker >= 0) {
+        queryPart =
+          queryPart.slice(0, badMarker);
+      }
+
+      const queryHardStop =
+        queryPart.search(
+          /[\s"'<>^|`\x00-\x1F\x7F-\x9F]/
+        );
+
+      if (queryHardStop >= 0) {
+        queryPart =
+          queryPart.slice(0, queryHardStop);
+      }
+
+      cleaned += queryPart;
+    }
+
+    cleaned = cleaned
+      .replace(/[),.;\]}]+$/g, "")
+      .trim()
+      .slice(0, 1000);
+
+    if (isHttpUrl(cleaned)) {
+      results.push(cleaned);
+    }
+  }
+
+  return [...new Set(results)];
+}
+
+/*
+ * JSON ထဲမှာရှိပြီးသား corrupted URL ကိုလည်း
+ * တစ်ခုတည်း ပြန်သန့်စင်ပေးရန် helper။
+ */
+function cleanMediaUrl(rawValue) {
+  const raw =
+    String(rawValue || "").trim();
+
+  if (!raw) {
+    return "";
+  }
+
+  const extracted =
+    extractCleanMediaUrls(raw);
+
+  if (extracted.length) {
+    return extracted[0];
+  }
+
+  /*
+   * Media extension မပါသော်လည်း standalone HTTP URL
+   * အဖြစ် လုံးဝမှန်နေပါက မူရင်း link ကိုခွင့်ပြုမယ်။
+   *
+   * Raw text/filepath/control characters ပါရင် မယူပါ။
+   */
+  if (
+    !/[\s"'<>^|`\x00-\x1F\x7F-\x9F]/.test(raw) &&
+    isHttpUrl(raw)
+  ) {
+    return raw.slice(0, 1000);
+  }
+
+  return "";
+}
+
+function parseRawTextToSeasons(rawText) {
+  const matches =
+    extractCleanMediaUrls(rawText);
+
+  if (!matches.length) {
+    return null;
+  }
 
   const episodeRows = [];
+
   for (const originalUrl of matches) {
     let decoded = originalUrl;
-    try { decoded = decodeURIComponent(originalUrl); } catch (_) {}
+
+    try {
+      decoded =
+        decodeURIComponent(originalUrl);
+    } catch (_) {}
+
     let seasonNum = 1;
     let episodeNum = null;
-    const seasonEpisode = decoded.match(/(?:^|[^a-z0-9])s(\d{1,3})[\s._-]*e(?:p)?(\d{1,4})(?:[^a-z0-9]|$)/i);
+
+    const seasonEpisode =
+      decoded.match(
+        /(?:^|[^a-z0-9])s(\d{1,3})[\s._-]*e(?:p)?(\d{1,4})(?:[^a-z0-9]|$)/i
+      );
+
     if (seasonEpisode) {
-      seasonNum = parseInt(seasonEpisode[1], 10);
-      episodeNum = parseInt(seasonEpisode[2], 10);
+      seasonNum =
+        parseInt(
+          seasonEpisode[1],
+          10
+        );
+
+      episodeNum =
+        parseInt(
+          seasonEpisode[2],
+          10
+        );
     } else {
-      const episodeWord = decoded.match(/(?:^|[^a-z0-9])(?:episode|ep|e)[\s._-]*(\d{1,4})(?:[^a-z0-9]|$)/i);
+      const episodeWord =
+        decoded.match(
+          /(?:^|[^a-z0-9])(?:episode|ep|e)[\s._-]*(\d{1,4})(?:[^a-z0-9]|$)/i
+        );
+
       if (episodeWord) {
-        episodeNum = parseInt(episodeWord[1], 10);
+        episodeNum =
+          parseInt(
+            episodeWord[1],
+            10
+          );
       } else {
         let pathname = "";
-        try { pathname = new URL(originalUrl).pathname; } catch (_) {}
-        const baseName = pathname.split("/").pop() || "";
-        const numberOnly = baseName.match(/(?:^|[^0-9])(\d{1,4})(?:[^0-9]|$)/);
-        if (numberOnly) episodeNum = parseInt(numberOnly[1], 10);
+
+        try {
+          pathname =
+            new URL(originalUrl).pathname;
+        } catch (_) {}
+
+        const baseName =
+          pathname.split("/").pop() || "";
+
+        const numberOnly =
+          baseName.match(
+            /(?:^|[^0-9])(\d{1,4})(?:[^0-9]|$)/
+          );
+
+        if (numberOnly) {
+          episodeNum =
+            parseInt(
+              numberOnly[1],
+              10
+            );
+        }
       }
     }
-    if (!Number.isFinite(seasonNum) || seasonNum < 1 || seasonNum > 100) seasonNum = 1;
-    if (!Number.isFinite(episodeNum) || episodeNum < 1 || episodeNum > 1000) episodeNum = null;
-    episodeRows.push({ season: seasonNum, ep: episodeNum, video_url: originalUrl });
+
+    if (
+      !Number.isFinite(seasonNum) ||
+      seasonNum < 1 ||
+      seasonNum > 100
+    ) {
+      seasonNum = 1;
+    }
+
+    if (
+      !Number.isFinite(episodeNum) ||
+      episodeNum < 1 ||
+      episodeNum > 1000
+    ) {
+      episodeNum = null;
+    }
+
+    episodeRows.push({
+      season: seasonNum,
+      ep: episodeNum,
+      video_url: originalUrl,
+    });
   }
 
-  const nextEpisodeBySeason = new Map();
+  const nextEpisodeBySeason =
+    new Map();
+
   for (const row of episodeRows) {
-    const currentNext = nextEpisodeBySeason.get(row.season) || 1;
+    const currentNext =
+      nextEpisodeBySeason.get(
+        row.season
+      ) || 1;
+
     if (row.ep == null) {
       row.ep = currentNext;
-      nextEpisodeBySeason.set(row.season, currentNext + 1);
+
+      nextEpisodeBySeason.set(
+        row.season,
+        currentNext + 1
+      );
     } else {
-      nextEpisodeBySeason.set(row.season, Math.max(currentNext, row.ep + 1));
+      nextEpisodeBySeason.set(
+        row.season,
+        Math.max(
+          currentNext,
+          row.ep + 1
+        )
+      );
     }
   }
+
   const grouped = new Map();
+
   for (const row of episodeRows) {
-    if (!grouped.has(row.season)) grouped.set(row.season, []);
+    if (!grouped.has(row.season)) {
+      grouped.set(
+        row.season,
+        []
+      );
+    }
+
     grouped.get(row.season).push({
       ep: row.ep,
       title: `Episode ${row.ep}`,
@@ -4848,15 +5164,35 @@ function parseRawTextToSeasons(rawText) {
       download_url: "",
     });
   }
-  return [...grouped.entries()].map(([season, episodes]) => {
-    episodes.sort((a, b) => a.ep - b.ep);
-    const seen = new Set();
-    const unique = episodes.filter(ep => {
-      if (seen.has(ep.ep)) return false;
-      seen.add(ep.ep); return true;
-    });
-    return { season, episodes: unique };
-  }).sort((a, b) => a.season - b.season);
+
+  return [...grouped.entries()]
+    .map(([season, episodes]) => {
+      episodes.sort(
+        (a, b) => a.ep - b.ep
+      );
+
+      const seen =
+        new Set();
+
+      const unique =
+        episodes.filter(episode => {
+          if (seen.has(episode.ep)) {
+            return false;
+          }
+
+          seen.add(episode.ep);
+          return true;
+        });
+
+      return {
+        season,
+        episodes: unique,
+      };
+    })
+    .sort(
+      (a, b) =>
+        a.season - b.season
+    );
 }
 
 function sanitizeSeasons(rawInput) {
@@ -4924,10 +5260,55 @@ function sanitizeSeasons(rawInput) {
       } else {
         return { ok: false, err: `Season ${seasonNumber}, Episode ${episodeIndex + 1} format မှားနေပါတယ်။`, seasons: [] };
       }
-      videoUrl = videoUrl.slice(0, 1000); downloadUrl = downloadUrl.slice(0, 1000); episodeTitle = episodeTitle.slice(0, 200);
-      if (!videoUrl) return { ok: false, err: `Season ${seasonNumber}, Episode ${episodeNumber} မှာ Video URL မရှိပါ။`, seasons: [] };
-      if (!isHttpUrl(videoUrl)) return { ok: false, err: `Season ${seasonNumber}, Episode ${episodeNumber} ရဲ့ Video URL မှားနေပါတယ်။`, seasons: [] };
-      if (downloadUrl && !isHttpUrl(downloadUrl)) return { ok: false, err: `Season ${seasonNumber}, Episode ${episodeNumber} ရဲ့ Download URL မှားနေပါတယ်။`, seasons: [] };
+      /*
+ * Raw text ကနေဝင်လာတာပဲဖြစ်ဖြစ်၊
+ * JSON ထဲ corrupted URL ပါလာတာပဲဖြစ်ဖြစ်
+ * media extension အဆုံးမှာ URL ကိုသန့်စင်မယ်။
+ */
+videoUrl =
+  cleanMediaUrl(videoUrl);
+
+downloadUrl =
+  downloadUrl
+    ? cleanMediaUrl(downloadUrl)
+    : "";
+
+episodeTitle =
+  episodeTitle.slice(0, 200);
+
+if (!videoUrl) {
+  return {
+    ok: false,
+    err:
+      `Season ${seasonNumber}, Episode ${episodeNumber} ` +
+      "မှာ မှန်ကန်သော Video URL မရှိပါ။",
+    seasons: [],
+  };
+}
+
+if (!isHttpUrl(videoUrl)) {
+  return {
+    ok: false,
+    err:
+      `Season ${seasonNumber}, Episode ${episodeNumber} ` +
+      "ရဲ့ Video URL မှားနေပါတယ်။",
+    seasons: [],
+  };
+}
+
+if (
+  downloadUrl &&
+  !isHttpUrl(downloadUrl)
+) {
+  return {
+    ok: false,
+    err:
+      `Season ${seasonNumber}, Episode ${episodeNumber} ` +
+      "ရဲ့ Download URL မှားနေပါတယ်။",
+    seasons: [],
+  };
+}
+
       if (usedEpisodeNumbers.has(episodeNumber)) {
         let nextNumber = 1;
         while (usedEpisodeNumbers.has(nextNumber)) nextNumber++;
