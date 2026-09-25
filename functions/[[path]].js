@@ -4839,7 +4839,7 @@ function adminEditPage(item, csrfToken, error = "") {
  * အဆုံးမှာ URL ကိုဖြတ်ပေးမယ်။
  */
 const MEDIA_FILE_EXTENSION_RE =
-  /\.(?:mp4|mkv|webm|m4v|mov|m3u8)/i;
+  /\.(?:mp4|mkv|webm|m4v|mov|m3u8)(?=[?#\s"'<>^|`\x00-\x1F\x7F-\x9F]|$)/i;
 
 const HTTP_START_RE =
   /https?:\/\//gi;
